@@ -137,8 +137,17 @@ public sealed class GraphAuthService
             .WithClientName("QuarterHour")
             .Build();
 
+        // Windows encrypts the file with DPAPI; macOS and Linux keep the key in the Keychain / keyring, which need naming.
         _cacheHelper ??= await MsalCacheHelper.CreateAsync(
-            new StorageCreationPropertiesBuilder(_directory.TokenCacheFileName, _directory.Root).Build());
+            new StorageCreationPropertiesBuilder(_directory.TokenCacheFileName, _directory.Root)
+                .WithMacKeyChain("QuarterHour", "MsalTokenCache")
+                .WithLinuxKeyring(
+                    "com.quarterhour.tokencache",
+                    MsalCacheHelper.LinuxKeyRingDefaultCollection,
+                    "QuarterHour Microsoft Graph token cache",
+                    new KeyValuePair<string, string>("Version", "1"),
+                    new KeyValuePair<string, string>("ProductGroup", "QuarterHour"))
+                .Build());
         _cacheHelper.RegisterCache(application.UserTokenCache);
         _application = application;
         _applicationKey = key;
