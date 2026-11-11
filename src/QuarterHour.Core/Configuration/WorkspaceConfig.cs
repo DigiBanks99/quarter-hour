@@ -8,7 +8,10 @@ namespace QuarterHour.Core.Configuration;
 /// </summary>
 public sealed class WorkspaceConfig
 {
-    public int SchemaVersion { get; set; } = 1;
+    /// <summary>2: the export follows the Timesheet system's upload template rather than its export.</summary>
+    public int SchemaVersion { get; set; } = CurrentSchemaVersion;
+
+    public const int CurrentSchemaVersion = 2;
     public GeneralSettings General { get; set; } = new();
     public RoundingSettings Rounding { get; set; } = new();
     public TargetSettings Targets { get; set; } = new();
@@ -78,6 +81,17 @@ public sealed class WorkspaceConfig
         }
 
         Export.Sentiments ??= [];
+        if (string.IsNullOrWhiteSpace(Export.TableName))
+        {
+            Export.TableName = ExportProfile.DefaultTableName;
+        }
+
+        if (SchemaVersion < 2)
+        {
+            Export.UpgradeToUploadTemplate();
+            SchemaVersion = CurrentSchemaVersion;
+        }
+
         if (string.IsNullOrWhiteSpace(Export.DefaultSentiment))
         {
             Export.DefaultSentiment = "Neutral";
@@ -335,20 +349,29 @@ public sealed class AgentsViewSettings
 }
 
 /// <summary>
-/// How the .xlsx is laid out. The defaults match the Timesheet system's own export (TimesheetExport.xlsx): one
-/// "Timesheet" table with Date, Project, Category, Hours, Minutes, Billable, Description, Ticket Number, Sentiment
-/// and Worked From, every cell written as text.
+/// How the .xlsx is laid out. The defaults match the Timesheet system's upload template (TimesheetUpload.xlsx): a
+/// "TimesheetUpload" sheet holding a "TimesheetEntry" table with Date, Project, Category, Hours, Minutes, Billable,
+/// Description, TicketNumber, Sentiment and WorkedFrom, spelled exactly as the importer expects. Dates are real dates
+/// and Hours/Minutes whole numbers, as the template's validation asks for.
 /// </summary>
 public sealed class ExportProfile
 {
-    public string SheetName { get; set; } = "Timesheet";
-    public string FileNameTemplate { get; set; } = "TimesheetExport {period}.xlsx";
+    public const string DefaultSheetName = "TimesheetUpload";
+    public const string DefaultTableName = "TimesheetEntry";
+    public const string DefaultFileNameTemplate = "TimesheetUpload {period}.xlsx";
+
+    public string SheetName { get; set; } = DefaultSheetName;
+
+    /// <summary>The Excel table's name, when the rows are written as a table.</summary>
+    public string TableName { get; set; } = DefaultTableName;
+
+    public string FileNameTemplate { get; set; } = DefaultFileNameTemplate;
     public List<ExportColumn> Columns { get; set; } = [];
 
-    /// <summary>Write every cell as text, like the Timesheet system's export does.</summary>
-    public bool CellsAsText { get; set; } = true;
+    /// <summary>Write every cell as text instead of real dates and numbers.</summary>
+    public bool CellsAsText { get; set; }
 
-    /// <summary>Wrap the rows in an Excel table named after the sheet, like the Timesheet system's export does.</summary>
+    /// <summary>Wrap the rows in an Excel table, like the upload template does.</summary>
     public bool WriteAsTable { get; set; } = true;
 
     /// <summary>Adds a second sheet with totals. Off by default, so the upload file has only the timesheet.</summary>
@@ -361,21 +384,56 @@ public sealed class ExportProfile
 
     public bool SkipZeroHourRows { get; set; } = true;
     public string DefaultSentiment { get; set; } = "Neutral";
-    public List<string> Sentiments { get; set; } = ["Happy", "Neutral", "Unhappy"];
+
+    /// <summary>The upload template's Sentiment values.</summary>
+    public List<string> Sentiments { get; set; } = ["Neutral", "Happy", "Sad"];
 
     public static IEnumerable<ExportColumn> DefaultColumns() =>
     [
-        new() { Header = "Date", Value = "{date:yyyy-MM-dd}" },
+        new() { Header = "Date", Value = "{date}" },
         new() { Header = "Project", Value = "{project}" },
         new() { Header = "Category", Value = "{category}" },
         new() { Header = "Hours", Value = "{hoursPart}" },
         new() { Header = "Minutes", Value = "{minutesPart}" },
-        new() { Header = "Billable", Value = "{billable}" },
+        new() { Header = "Billable", Value = "{billable:Yes/No}" },
         new() { Header = "Description", Value = "{description}" },
-        new() { Header = "Ticket Number", Value = "{ticket}" },
+        new() { Header = "TicketNumber", Value = "{ticket}" },
         new() { Header = "Sentiment", Value = "{sentiment}" },
-        new() { Header = "Worked From", Value = "{location}" },
+        new() { Header = "WorkedFrom", Value = "{location}" },
     ];
+
+    /// <summary>The headers of the layout before version 2, which copied the Timesheet system's export instead of its upload template.</summary>
+    private static readonly string[] ExportLayoutHeaders =
+        ["Date", "Project", "Category", "Hours", "Minutes", "Billable", "Description", "Ticket Number", "Sentiment", "Worked From"];
+
+    /// <summary>
+    /// Moves a profile still on the old export-shaped defaults to the upload template. Anything the user changed
+    /// themselves (a custom column list, sheet or file name) is kept.
+    /// </summary>
+    public void UpgradeToUploadTemplate()
+    {
+        if (Columns.Select(column => column.Header).SequenceEqual(ExportLayoutHeaders))
+        {
+            Columns = [.. DefaultColumns()];
+            CellsAsText = false;
+        }
+
+        if (SheetName == "Timesheet")
+        {
+            SheetName = DefaultSheetName;
+        }
+
+        if (FileNameTemplate == "TimesheetExport {period}.xlsx")
+        {
+            FileNameTemplate = DefaultFileNameTemplate;
+        }
+
+        Sentiments = Sentiments.Select(sentiment => sentiment == "Unhappy" ? "Sad" : sentiment).Distinct().ToList();
+        if (DefaultSentiment == "Unhappy")
+        {
+            DefaultSentiment = "Sad";
+        }
+    }
 }
 
 public sealed class ExportColumn
