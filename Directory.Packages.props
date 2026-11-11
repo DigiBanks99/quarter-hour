@@ -1,0 +1,23 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- UI -->
+    <PackageVersion Include="Aspire.Hosting.Dotnet" Version="13.6.5-preview.1.26559.7" />
+    <PackageVersion Include="MudBlazor" Version="9.12.0" />
+    <!-- Calendar -->
+    <PackageVersion Include="Ical.Net" Version="5.2.4" />
+    <PackageVersion Include="Microsoft.Identity.Client" Version="4.92.0" />
+    <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.92.0" />
+    <!-- Agent session stores (OpenCode keeps sessions in SQLite) -->
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.15" />
+    <!-- Excel export -->
+    <PackageVersion Include="ClosedXML" Version="0.105.1" />
+    <!-- Testing -->
+    <PackageVersion Include="NSubstitute" Version="6.2.0" />
+    <PackageVersion Include="Shouldly" Version="4.3.0" />
+    <PackageVersion Include="TUnit.Core" Version="1.83.0" />
+    <PackageVersion Include="TUnit.Engine" Version="1.83.0" />
+  </ItemGroup>
+</Project>
