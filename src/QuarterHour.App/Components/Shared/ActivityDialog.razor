@@ -1,0 +1,101 @@
+@inject WorkspaceService Workspace
+
+<MudDialog>
+    <TitleContent>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudIcon Icon="@Ui.SourceIcon(Item.Activity.Source)" />
+            <MudText Typo="Typo.h6">@Item.Activity.Title</MudText>
+        </MudStack>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="qh-muted mb-3">
+            @Ui.LongDay(Item.Date) ·
+            @(Item.Activity.IsTimed ? $"{Ui.Time(Item.Start)}–{Ui.Time(Item.End)}" : "no set time") ·
+            measured @Ui.Duration(Item.Raw)@(Item.WasClipped ? $", counts {Ui.Duration(Item.Counted)} after overlaps" : "")
+        </MudText>
+        <MudStack Spacing="3">
+            <MudSwitch T="bool" @bind-Value="_excluded" Color="Color.Error" Label="Leave this out of the timesheet" />
+            @if (!_excluded)
+            {
+                <CategorySelect @bind-Value="_categoryId" Label="Category" NullText="@AutomaticCategory" />
+                <LocationSelect @bind-Value="_location" Label="Location" NullText="@($"Automatic ({Item.Location.Name}, {Ui.OriginLabel(Item.Location.Origin)})")" />
+                <MudTextField T="string" @bind-Value="_description" Label="Description" Placeholder="@Item.Description" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" />
+                <MudNumericField T="int?" @bind-Value="_minutes" Label="Minutes (before rounding)" Placeholder="@(((int)Item.Counted.TotalMinutes).ToString(CultureInfo.InvariantCulture))"
+                                 Variant="Variant.Outlined" Margin="Margin.Dense" Min="0" Max="1440" Clearable="true"
+                                 HelperText="Leave empty to use the measured time." />
+            }
+            @if (Item.Status == ActivityStatus.Filtered || Item.Status == ActivityStatus.NotRelevant)
+            {
+                <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined">
+                    @(Item.Status == ActivityStatus.Filtered ? "A relevance filter" : "A mapping") (@Item.Match.Rule?.Name) left this out.
+                    Choose a category to count it anyway.
+                </MudAlert>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        @if (Item.Override is not null)
+        {
+            <MudButton Color="Color.Default" OnClick="Reset" StartIcon="@Icons.Material.Outlined.Undo">Reset</MudButton>
+        }
+        <MudSpacer />
+        <MudButton OnClick="() => Dialog.Cancel()">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Save">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    [Parameter] public ActivityResult Item { get; set; } = default!;
+
+    private bool _excluded;
+    private string? _categoryId;
+    private string? _location;
+    private string? _description;
+    private int? _minutes;
+
+    private string AutomaticCategory =>
+        Item.Match.Rule is { Action: RuleAction.Map } rule && Workspace.Config.FindCategory(rule.CategoryId) is { } category
+            ? $"Automatic ({category.DisplayName})"
+            : "Automatic (unmapped)";
+
+    protected override void OnInitialized()
+    {
+        ActivityOverride? current = Item.Override;
+        _excluded = current?.Excluded == true;
+        _categoryId = current?.CategoryId;
+        _location = current?.Location;
+        _description = current?.Description;
+        _minutes = current?.Minutes;
+    }
+
+    private void Save()
+    {
+        bool wasLeftOut = Item.Match.Outcome is RuleOutcome.Filtered or RuleOutcome.NotRelevant;
+        ActivityOverride change = new()
+        {
+            Excluded = _excluded ? true : wasLeftOut && _categoryId is not null ? false : null,
+            CategoryId = _excluded ? null : _categoryId,
+            Location = _excluded ? null : _location,
+            Description = _excluded || string.IsNullOrWhiteSpace(_description) ? null : _description.Trim(),
+            Minutes = _excluded ? null : _minutes,
+        };
+        Workspace.UpdateJournal(journal =>
+        {
+            journal.Overrides.Remove(Item.Activity.Id);
+            journal.Overrides[Item.PieceId] = change;
+        });
+        Dialog.Close(DialogResult.Ok(true));
+    }
+
+    private void Reset()
+    {
+        Workspace.UpdateJournal(journal =>
+        {
+            journal.Overrides.Remove(Item.PieceId);
+            journal.Overrides.Remove(Item.Activity.Id);
+        });
+        Dialog.Close(DialogResult.Ok(true));
+    }
+}

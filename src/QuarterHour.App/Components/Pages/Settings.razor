@@ -1,0 +1,445 @@
+@page "/settings"
+@using QuarterHour.Infrastructure.Agents
+@using QuarterHour.Infrastructure.Calendar
+@using QuarterHour.Infrastructure.Storage
+@using QuarterHour.Core.Sources
+@inherits PeriodPageBase
+@inject ISnackbar Snackbar
+@inject IDialogService Dialogs
+@inject AgentSessionScanner Scanner
+
+<PageTitle>Settings · QuarterHour</PageTitle>
+
+<div class="qh-page-head">
+    <div>
+        <MudText Typo="Typo.h4" Class="qh-title">Settings</MudText>
+        <MudText Typo="Typo.body2" Class="qh-muted">Saved as you go, in @Workspace.DataDirectory</MudText>
+    </div>
+</div>
+
+<MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" TabPanelsClass="pt-4" Class="qh-panel-plain" @bind-ActivePanelIndex="_tab">
+    <MudTabPanel Text="Calendar" Icon="@Icons.Material.Outlined.Event">
+        <MudGrid Spacing="3">
+            <MudItem xs="12" md="7">
+                <MudPaper Class="qh-panel" Elevation="0">
+                    <MudText Typo="Typo.h6" Class="mb-2">Where meetings come from</MudText>
+                    <MudRadioGroup T="CalendarProviderKind" Value="Config.Calendar.Provider" ValueChanged="value => Save(config => config.Calendar.Provider = value)">
+                        <MudRadio T="CalendarProviderKind" Value="CalendarProviderKind.MicrosoftGraph" Color="Color.Primary">Microsoft 365 (Microsoft Graph)</MudRadio>
+                        <MudRadio T="CalendarProviderKind" Value="CalendarProviderKind.OutlookDesktop" Color="Color.Primary" Disabled="!OutlookCalendarProvider.IsAvailable">
+                            Classic Outlook on this PC @(OutlookCalendarProvider.IsAvailable ? "" : "(not installed)")
+                        </MudRadio>
+                        <MudRadio T="CalendarProviderKind" Value="CalendarProviderKind.None" Color="Color.Primary">Only imported .ics files</MudRadio>
+                    </MudRadioGroup>
+
+                    @if (Config.Calendar.Provider == CalendarProviderKind.MicrosoftGraph)
+                    {
+                        GraphSettings graph = Config.Calendar.Graph;
+                        <MudDivider Class="my-3" />
+                        <MudGrid Spacing="2">
+                            <MudItem xs="12" md="6">
+                                <MudTextField T="string" Value="graph.ClientId" ValueChanged=@(value => Save(_ => graph.ClientId = (value ?? "").Trim())) Label="Application (client) ID"
+                                              Variant="Variant.Outlined" Margin="Margin.Dense" DebounceInterval="600" HelperText="From the Entra ID app registration" />
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudTextField T="string" Value="graph.TenantId" ValueChanged=@(value => Save(_ => graph.TenantId = string.IsNullOrWhiteSpace(value) ? "organizations" : value.Trim())) Label="Tenant"
+                                              Variant="Variant.Outlined" Margin="Margin.Dense" DebounceInterval="600" HelperText="organizations, or the tenant id / domain" />
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudSelect T="string" Value="graph.Scope" ValueChanged=@(value => Save(_ => graph.Scope = value ?? "Calendars.ReadBasic")) Label="Permission" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                                    <MudSelectItem T="string" Value="@("Calendars.ReadBasic")">Calendars.ReadBasic (no bodies or attachments)</MudSelectItem>
+                                    <MudSelectItem T="string" Value="@("Calendars.Read")">Calendars.Read</MudSelectItem>
+                                </MudSelect>
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudSelect T="GraphSignInMode" Value="graph.SignInMode" ValueChanged="value => Save(_ => graph.SignInMode = value)" Label="Sign in with" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                                    <MudSelectItem T="GraphSignInMode" Value="GraphSignInMode.InteractiveBrowser">The browser on this PC</MudSelectItem>
+                                    <MudSelectItem T="GraphSignInMode" Value="GraphSignInMode.DeviceCode">A device code (any browser)</MudSelectItem>
+                                </MudSelect>
+                            </MudItem>
+                        </MudGrid>
+                        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mt-3">
+                            @if (_signedInAs is not null)
+                            {
+                                <MudChip T="string" Icon="@Icons.Material.Filled.VerifiedUser" Color="Color.Success" Variant="Variant.Outlined">Signed in as @_signedInAs</MudChip>
+                                <MudButton Variant="Variant.Text" OnClick="SignOutAsync">Sign out</MudButton>
+                            }
+                            else
+                            {
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="string.IsNullOrWhiteSpace(graph.ClientId) || _busy" OnClick="SignInAndSyncAsync">Sign in and sync</MudButton>
+                            }
+                            @if (_signedInAs is not null)
+                            {
+                                <MudButton Variant="Variant.Outlined" Disabled="_busy" StartIcon="@Icons.Material.Filled.Sync" OnClick="SignInAndSyncAsync">Sync @UiState.Period.Name</MudButton>
+                            }
+                        </MudStack>
+                        @if (_deviceCode is not null)
+                        {
+                            <MudAlert Severity="Severity.Info" Class="mt-3">@_deviceCode</MudAlert>
+                        }
+                        <MudExpansionPanels Elevation="0" Class="mt-3">
+                            <MudExpansionPanel Text="How to get a client ID">
+                                <ol class="qh-steps">
+                                    <li>In the Azure portal, open <b>Microsoft Entra ID → App registrations → New registration</b>. Name it “QuarterHour”, accounts in this organisation only.</li>
+                                    <li>Under <b>Authentication</b>, add the platform <b>Mobile and desktop applications</b> with the redirect URI <code>http://localhost</code>, and set <b>Allow public client flows</b> to <b>Yes</b> (needed for device codes).</li>
+                                    <li>Under <b>API permissions</b>, add <b>Microsoft Graph → Delegated → Calendars.ReadBasic</b>. If your organisation needs admin consent, ask IT to grant it.</li>
+                                    <li>Copy the <b>Application (client) ID</b> into the box above and sign in.</li>
+                                </ol>
+                                <MudText Typo="Typo.body2" Class="qh-muted">No access yet? In Outlook use <b>File → Save Calendar</b> (or publish it as ICS) and import the file below.</MudText>
+                            </MudExpansionPanel>
+                        </MudExpansionPanels>
+                    }
+                    else if (Config.Calendar.Provider == CalendarProviderKind.OutlookDesktop)
+                    {
+                        <MudDivider Class="my-3" />
+                        <MudText Typo="Typo.body2" Class="mb-2">Reads the default calendar of classic Outlook through its COM interface. Outlook may start in the background, and IT policy can show a security prompt.</MudText>
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" StartIcon="@Icons.Material.Filled.Sync" OnClick="SignInAndSyncAsync">Sync @UiState.Period.Name</MudButton>
+                    }
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" md="5">
+                <MudPaper Class="qh-panel" Elevation="0">
+                    <MudText Typo="Typo.h6" Class="mb-2">@UiState.Period.Name</MudText>
+                    @{
+                        CalendarSnapshot? snapshot = Workspace.CalendarSnapshot(UiState.Period);
+                    }
+                    @if (snapshot is null)
+                    {
+                        <MudText Class="qh-muted">No calendar events for this period yet.</MudText>
+                    }
+                    else
+                    {
+                        <MudText>@Ui.Plural(snapshot.Events.Count, "event") from @snapshot.Source</MudText>
+                        <MudText Typo="Typo.body2" Class="qh-muted">Fetched @snapshot.FetchedAt.ToLocalTime().ToString("ddd d MMM HH:mm", CultureInfo.InvariantCulture)</MudText>
+                        <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Error" Class="mt-1" OnClick="ClearCalendar">Forget these events</MudButton>
+                    }
+                    <MudDivider Class="my-3" />
+                    <MudText Typo="Typo.subtitle1">Import an .ics file</MudText>
+                    <MudText Typo="Typo.body2" Class="qh-muted mb-2">Events from @UiState.Period.RangeLabel replace what's cached for the period.</MudText>
+                    <label class="qh-upload">
+                        <InputFile OnChange="ImportIcsAsync" accept=".ics,text/calendar" />
+                        <MudIcon Icon="@Icons.Material.Outlined.UploadFile" />
+                        <span>@(_busy ? "Reading…" : "Choose an .ics file")</span>
+                    </label>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+    </MudTabPanel>
+
+    <MudTabPanel Text="Agent sessions" Icon="@Icons.Material.Outlined.SmartToy">
+        <MudGrid Spacing="3">
+            <MudItem xs="12" md="4">
+                <MudPaper Class="qh-panel" Elevation="0">
+                    <MudText Typo="Typo.h6" Class="mb-2">Turning sessions into time</MudText>
+                    <MudNumericField T="int" Value="Config.Agents.IdleGapMinutes" ValueChanged="value => SaveAgents(config => config.Agents.IdleGapMinutes = Math.Clamp(value, 1, 240))" Label="A pause longer than (minutes)"
+                                     HelperText="…ends a block of work" Min="1" Max="240" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    <MudNumericField T="int" Value="Config.Agents.PaddingMinutes" ValueChanged="value => SaveAgents(config => config.Agents.PaddingMinutes = Math.Clamp(value, 0, 60))" Label="Add after each block (minutes)"
+                                     HelperText="Time to read and review the result" Min="0" Max="60" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mt-2" />
+                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Sync" Class="mt-3" Disabled="_busy" OnClick="RescanAsync">Rescan @UiState.Period.Name</MudButton>
+                </MudPaper>
+                <MudPaper Class="qh-panel mt-3" Elevation="0">
+                    <MudText Typo="Typo.h6" Class="mb-1">AgentsView</MudText>
+                    <MudText Typo="Typo.body2" Class="qh-muted mb-2">Reads 50+ agents (Cursor, Gemini, Amp, …) through a running <code>agentsview serve</code>.</MudText>
+                    <MudSwitch T="bool" Value="Config.Agents.AgentsView.Enabled" ValueChanged="value => SaveAgents(config => config.Agents.AgentsView.Enabled = value)" Color="Color.Primary" Label="Use AgentsView" />
+                    <MudTextField T="string" Value="Config.Agents.AgentsView.BaseUrl" ValueChanged="value => SaveAgents(config => config.Agents.AgentsView.BaseUrl = value ?? config.Agents.AgentsView.BaseUrl)" Label="Address"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense" DebounceInterval="600" Disabled="!Config.Agents.AgentsView.Enabled" />
+                    <MudSwitch T="bool" Value="Config.Agents.AgentsView.SkipAgentsCoveredByScanners" ValueChanged="value => SaveAgents(config => config.Agents.AgentsView.SkipAgentsCoveredByScanners = value)"
+                               Color="Color.Primary" Label="Skip agents read directly below" Disabled="!Config.Agents.AgentsView.Enabled" />
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" md="8">
+                <MudPaper Class="qh-panel" Elevation="0">
+                    <MudText Typo="Typo.h6" Class="mb-2">Read directly</MudText>
+                    @{
+                        AgentScanSummary? scan = Workspace.LastAgentScan(UiState.Period);
+                    }
+                    @foreach (AgentScannerSettings scanner in Config.Agents.Scanners)
+                    {
+                        FileSessionSource? source = Scanner.Sources.OfType<FileSessionSource>().FirstOrDefault(candidate => candidate.Kind == scanner.Kind);
+                        AgentScanResult? result = scan?.Results.FirstOrDefault(candidate => candidate.Source == source?.Name);
+                        <div class="qh-scanner">
+                            <div class="qh-scanner-head">
+                                <MudSwitch T="bool" Value="scanner.Enabled" ValueChanged="value => SaveAgents(_ => scanner.Enabled = value)" Color="Color.Primary" Label="@(source?.Name ?? scanner.Kind.ToString())" />
+                                @if (result is not null && scanner.Enabled)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@(result.Sessions.Count > 0 ? Color.Success : Color.Default)">@Ui.Plural(result.Sessions.Count, "session") this period</MudChip>
+                                }
+                            </div>
+                            <MudTextField T="string" Value="@string.Join("; ", scanner.Paths)" ValueChanged="value => SetPaths(scanner, value)" Label="Folders"
+                                          Placeholder="@string.Join("; ", source?.DefaultLocations() ?? [])" HelperText="Leave empty for the usual places; separate several with ;"
+                                          Variant="Variant.Outlined" Margin="Margin.Dense" DebounceInterval="800" Disabled="!scanner.Enabled" />
+                            @foreach (string problem in result?.Problems ?? [])
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Warning">@problem</MudText>
+                            }
+                        </div>
+                    }
+                    @if (scan?.Results.FirstOrDefault(result => result.Source == "AgentsView") is { } agentsView && Config.Agents.AgentsView.Enabled)
+                    {
+                        <div class="qh-scanner">
+                            <MudText>AgentsView: @Ui.Plural(agentsView.Sessions.Count, "session") this period</MudText>
+                            @foreach (string problem in agentsView.Problems)
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Warning">@problem</MudText>
+                            }
+                        </div>
+                    }
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+    </MudTabPanel>
+
+    <MudTabPanel Text="Time & targets" Icon="@Icons.Material.Outlined.Timer">
+        <MudGrid Spacing="3">
+            <MudItem xs="12" md="6">
+                <MudPaper Class="qh-panel" Elevation="0">
+                    <MudText Typo="Typo.h6" Class="mb-2">Rounding</MudText>
+                    <MudGrid Spacing="2">
+                        <MudItem xs="6">
+                            <MudNumericField T="int" Value="Config.Rounding.IncrementMinutes" ValueChanged="value => Save(config => config.Rounding.IncrementMinutes = value)" Label="Round to (minutes)" Min="1" Max="60"
+                                             Variant="Variant.Outlined" Margin="Margin.Dense" />
+                        </MudItem>
+                        <MudItem xs="6">
+                            <MudNumericField T="int" Value="Config.Rounding.RoundUpFromMinutes" ValueChanged="value => Save(config => config.Rounding.RoundUpFromMinutes = value)" Label="Round up from (minutes)"
+                                             Min="0" Max="@Config.Rounding.IncrementMinutes" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                        </MudItem>
+                    </MudGrid>
+                    <MudText Typo="Typo.body2" Class="qh-muted mt-2">
+                        With these: 50m → @Ui.Duration(TimeSpan.FromMinutes(Rounding.RoundMinutes(50, Config.Rounding))),
+                        3h 22m → @Ui.Duration(TimeSpan.FromMinutes(Rounding.RoundMinutes(202, Config.Rounding))),
+                        6m → @Ui.Duration(TimeSpan.FromMinutes(Rounding.RoundMinutes(6, Config.Rounding))).
+                    </MudText>
+                    <MudSelect T="RoundingScope" Value="Config.Rounding.Scope" ValueChanged="value => Save(config => config.Rounding.Scope = value)" Label="Round" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Class="mt-3">
+                        <MudSelectItem T="RoundingScope" Value="RoundingScope.EachLine">Each meeting, and each day's agent work per category</MudSelectItem>
+                        <MudSelectItem T="RoundingScope" Value="RoundingScope.DailyTotalPerCategory">Each day's total per category and location</MudSelectItem>
+                    </MudSelect>
+                    <MudSelect T="OverlapPolicy" Value="Config.General.OverlapPolicy" ValueChanged="value => Save(config => config.General.OverlapPolicy = value)" Label="When activities overlap" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Class="mt-3">
+                        <MudSelectItem T="OverlapPolicy" Value="OverlapPolicy.HigherPriorityWins">Count the time once: manual entries, then meetings, then agent work</MudSelectItem>
+                        <MudSelectItem T="OverlapPolicy" Value="OverlapPolicy.CountOverlaps">Count every activity in full</MudSelectItem>
+                    </MudSelect>
+                </MudPaper>
+                <MudPaper Class="qh-panel mt-3" Elevation="0">
+                    <MudText Typo="Typo.h6" Class="mb-2">Calendar</MudText>
+                    <MudSelect T="string" Value="Config.General.TimeZoneId" ValueChanged="value => Save(config => config.General.TimeZoneId = value ?? config.General.TimeZoneId)" Label="Time zone"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" MaxHeight="320">
+                        @foreach (TimeZoneInfo zone in TimeZoneInfo.GetSystemTimeZones())
+                        {
+                            <MudSelectItem T="string" Value="zone.Id">@zone.DisplayName</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudNumericField T="int" Value="Config.General.PeriodStartDay" ValueChanged="value => Save(config => config.General.PeriodStartDay = value)" Label="Timesheet periods start on day" Min="1" Max="28"
+                                     HelperText="1 for calendar months" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mt-3" />
+                    <MudText Typo="Typo.subtitle2" Class="mt-3">Working days</MudText>
+                    <div class="qh-weekdays">
+                        @foreach (DayOfWeek day in Week)
+                        {
+                            <button type="button" class="@($"qh-weekday {(Config.Targets.WorkDays.Contains(day) ? "qh-weekday-on" : "")}")" @onclick="() => ToggleWorkDay(day)">@day.ToString()[..2]</button>
+                        }
+                    </div>
+                    <MudSwitch T="bool" Value="Config.Targets.SouthAfricanPublicHolidays" ValueChanged="value => Save(config => config.Targets.SouthAfricanPublicHolidays = value)" Color="Color.Primary"
+                               Label="South African public holidays are days off" Class="mt-2" />
+                    <MudText Typo="Typo.subtitle2" Class="mt-3">Other days off (elections, company days)</MudText>
+                    @foreach (Holiday holiday in Config.Targets.CustomHolidays.OrderBy(holiday => holiday.Date))
+                    {
+                        <div class="qh-pinned-row">
+                            <span>@Ui.LongDay(holiday.Date)</span><span class="qh-muted">@holiday.Name</span>
+                            <MudIconButton Icon="@Icons.Material.Outlined.Close" Size="Size.Small" OnClick="() => Save(config => config.Targets.CustomHolidays.Remove(holiday))" aria-label="Remove" />
+                        </div>
+                    }
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mt-1">
+                        <MudDatePicker @bind-Date="_holidayDate" Label="Date" Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="d MMM yyyy" />
+                        <MudTextField T="string" @bind-Value="_holidayName" Label="Name" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" />
+                        <MudButton Variant="Variant.Outlined" Disabled="_holidayDate is null" OnClick="AddHoliday">Add</MudButton>
+                    </MudStack>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudPaper Class="qh-panel" Elevation="0">
+                    <MudText Typo="Typo.h6" Class="mb-2">Targets</MudText>
+                    <MudNumericField T="double" Value="Config.Targets.BillableTargetHours" ValueChanged="value => Save(config => config.Targets.BillableTargetHours = Math.Max(0, value))" Label="Billable hours per period"
+                                     Min="0" Max="400" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    <MudSwitch T="bool" Value="Config.Targets.ReduceTargetByLeave" ValueChanged="value => Save(config => config.Targets.ReduceTargetByLeave = value)" Color="Color.Primary" Label="Leave lowers the target" Class="mt-2" />
+                    <MudSwitch T="bool" Value="Config.Targets.IgnoreMeetingsOnLeaveDays" ValueChanged="value => Save(config => config.Targets.IgnoreMeetingsOnLeaveDays = value)" Color="Color.Primary" Label="Leave out meetings on full leave days" />
+                    <MudNumericField T="double" Value="Config.Targets.StandardDayHours" ValueChanged="value => Save(config => config.Targets.StandardDayHours = Math.Clamp(value, 0, 24))" Label="Hours in a working day"
+                                     Min="0" Max="24" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mt-2" />
+                    <MudNumericField T="double" Value="Config.Targets.AllDayEventHours" ValueChanged="value => Save(config => config.Targets.AllDayEventHours = Math.Clamp(value, 0, 24))" Label="Hours an all-day event counts for"
+                                     HelperText="For example leave mapped from an out-of-office event" Min="0" Max="24" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mt-2" />
+                </MudPaper>
+                <MudPaper Class="qh-panel mt-3" Elevation="0">
+                    <MudText Typo="Typo.h6" Class="mb-1">Fill up each day</MudText>
+                    <MudText Typo="Typo.body2" Class="qh-muted mb-2">
+                        Tops up every past working day that has something recorded to @Config.Targets.StandardDayHours.ToString("0.##", CultureInfo.InvariantCulture) h, by adding the rest to this category.
+                        Agent work in the category is merged into the same line, so its description says what you worked on.
+                    </MudText>
+                    <CategorySelect Value="@Config.Targets.TopUpCategoryId" ValueChanged="value => Save(config => config.Targets.TopUpCategoryId = value)" NullText="Don't top up" Label="Top up with" />
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+    </MudTabPanel>
+
+    <MudTabPanel Text="Data" Icon="@Icons.Material.Outlined.Storage">
+        <MudPaper Class="qh-panel" Elevation="0">
+            <MudText Typo="Typo.h6" Class="mb-2">Move to another machine</MudText>
+            <MudText Typo="Typo.body2" Class="mb-3">The configuration (categories, rules, mappings, locations, layout) is one JSON file. Download it here and import it on the other machine; your corrections and manual entries stay in <code>journal.json</code> in the data folder.</MudText>
+            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.FileDownload" Href="api/config" Target="_blank">Download configuration</MudButton>
+                <label class="qh-upload qh-upload-inline">
+                    <InputFile OnChange="ImportConfigAsync" accept=".json,application/json" />
+                    <MudIcon Icon="@Icons.Material.Outlined.UploadFile" />
+                    <span>Import configuration…</span>
+                </label>
+            </MudStack>
+            <MudDivider Class="my-4" />
+            <MudText Typo="Typo.subtitle1">Data folder</MudText>
+            <MudText Typo="Typo.body2" Class="qh-muted"><code>@Workspace.DataDirectory</code></MudText>
+            <MudText Typo="Typo.body2" Class="qh-muted mt-1">Set <code>QUARTERHOUR_DATA</code> (or <code>QuarterHour:DataDirectory</code> in appsettings.json) to keep it elsewhere, such as a OneDrive folder.</MudText>
+        </MudPaper>
+    </MudTabPanel>
+</MudTabs>
+
+@code {
+    private static readonly DayOfWeek[] Week = [DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday];
+
+    private int _tab;
+    private string? _signedInAs;
+    private string? _deviceCode;
+    private bool _busy;
+    private DateTime? _holidayDate;
+    private string? _holidayName;
+
+    protected override async Task OnSheetLoadedAsync()
+    {
+        try
+        {
+            _signedInAs = await Workspace.GraphAuth.SignedInAsAsync(Config.Calendar.Graph);
+        }
+        catch (Exception)
+        {
+            _signedInAs = null;
+        }
+    }
+
+    private void Save(Action<WorkspaceConfig> change) => Workspace.UpdateConfig(change);
+
+    private void SaveAgents(Action<WorkspaceConfig> change)
+    {
+        Workspace.UpdateConfig(change);
+        Workspace.ForgetAgentScans();
+    }
+
+    private void SetPaths(AgentScannerSettings scanner, string? text) => SaveAgents(_ =>
+        scanner.Paths = [.. (text ?? "").Split([';', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)]);
+
+    private void ToggleWorkDay(DayOfWeek day) => Save(config =>
+    {
+        if (!config.Targets.WorkDays.Remove(day))
+        {
+            config.Targets.WorkDays.Add(day);
+        }
+    });
+
+    private void AddHoliday()
+    {
+        if (_holidayDate is not { } date)
+        {
+            return;
+        }
+
+        Save(config => config.Targets.CustomHolidays.Add(new Holiday { Date = DateOnly.FromDateTime(date), Name = string.IsNullOrWhiteSpace(_holidayName) ? "Day off" : _holidayName.Trim() }));
+        _holidayDate = null;
+        _holidayName = null;
+    }
+
+    private async Task SignInAndSyncAsync()
+    {
+        _busy = true;
+        _deviceCode = null;
+        try
+        {
+            CalendarSnapshot snapshot = await Workspace.SyncCalendarAsync(UiState.Period, interactive: true, deviceCode: async message =>
+            {
+                _deviceCode = message;
+                await InvokeAsync(StateHasChanged);
+            });
+            _deviceCode = null;
+            Snackbar.Add($"Synced {Ui.Plural(snapshot.Events.Count, "event")} for {UiState.Period.Name}.", Severity.Success);
+            _signedInAs = await Workspace.GraphAuth.SignedInAsAsync(Config.Calendar.Graph);
+        }
+        catch (Exception exception)
+        {
+            Snackbar.Add(exception.Message, Severity.Error, options => options.RequireInteraction = true);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task SignOutAsync()
+    {
+        await Workspace.GraphAuth.SignOutAsync(Config.Calendar.Graph);
+        _signedInAs = null;
+        Snackbar.Add("Signed out.", Severity.Info);
+    }
+
+    private async Task RescanAsync()
+    {
+        _busy = true;
+        try
+        {
+            AgentScanSummary summary = await Workspace.RescanAgentsAsync(UiState.Period);
+            Snackbar.Add($"Found {Ui.Plural(summary.Sessions.Count, "agent session")} in {UiState.Period.Name}.", Severity.Success);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void ClearCalendar()
+    {
+        Workspace.ClearCalendar(UiState.Period);
+        Snackbar.Add("Forgot the calendar events for this period.", Severity.Info);
+    }
+
+    private async Task ImportIcsAsync(InputFileChangeEventArgs args)
+    {
+        _busy = true;
+        try
+        {
+            using StreamReader reader = new(args.File.OpenReadStream(30 * 1024 * 1024));
+            string ics = await reader.ReadToEndAsync();
+            CalendarSnapshot snapshot = Workspace.ImportIcs(UiState.Period, ics, args.File.Name);
+            Snackbar.Add($"Imported {Ui.Plural(snapshot.Events.Count, "event")} for {UiState.Period.Name}.", Severity.Success);
+        }
+        catch (Exception exception)
+        {
+            Snackbar.Add($"Couldn't read that calendar: {exception.Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ImportConfigAsync(InputFileChangeEventArgs args)
+    {
+        try
+        {
+            using StreamReader reader = new(args.File.OpenReadStream(5 * 1024 * 1024));
+            WorkspaceConfig imported = WorkspaceStore.ImportConfig(await reader.ReadToEndAsync());
+            bool? confirmed = await Dialogs.ShowMessageBoxAsync("Replace the configuration?",
+                $"This replaces your categories, rules, mappings and settings with the ones in {args.File.Name} ({Ui.Plural(imported.Categories.Count, "category", "categories")}, {Ui.Plural(imported.Rules.Count, "rule")}).",
+                yesText: "Replace", cancelText: "Cancel");
+            if (confirmed == true)
+            {
+                Workspace.ReplaceConfig(imported);
+                Workspace.ForgetAgentScans();
+                Snackbar.Add("Configuration imported.", Severity.Success);
+            }
+        }
+        catch (Exception exception)
+        {
+            Snackbar.Add($"Couldn't import that file: {exception.Message}", Severity.Error);
+        }
+    }
+}

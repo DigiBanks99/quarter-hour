@@ -1,0 +1,122 @@
+@inject WorkspaceService Workspace
+
+<div class="qh-month">
+    @foreach (string name in DayNames)
+    {
+        <div class="qh-month-head">@name</div>
+    }
+    <div class="qh-month-head qh-month-week">Week</div>
+
+    @foreach (List<DateOnly?> week in Weeks())
+    {
+        int weekMinutes = 0;
+        foreach (DateOnly? cell in week)
+        {
+            if (cell is not { } date || Sheet.Day(date) is not { } day)
+            {
+                <div class="qh-day qh-day-blank"></div>
+                continue;
+            }
+
+            weekMinutes += day.TotalMinutes;
+            <div class="@Classes(day)" @onclick="() => OnDayClick.InvokeAsync(date)" title="@Tooltip(day)">
+                <div class="qh-day-top">
+                    <span class="qh-day-num">@date.Day</span>
+                    @if (day.HasRecords || day.Kind == DayKind.WorkDay)
+                    {
+                        <MudIcon Icon="@Ui.LocationIcon(day.Location.Name)" Size="Size.Small" Class="@($"qh-day-loc {(day.Location.Origin == LocationOrigin.Default ? "" : "qh-day-loc-set")}")" />
+                    }
+                </div>
+                @if (day.HolidayName is not null)
+                {
+                    <div class="qh-day-holiday">@day.HolidayName</div>
+                }
+                <div class="qh-day-hours">@(day.TotalMinutes > 0 ? Ui.HoursNumber(day.TotalMinutes) : day.Kind == DayKind.WorkDay && !day.IsFuture ? "0.00" : "")</div>
+                @if (day.TotalMinutes > 0 || day.ExpectedMinutes > 0)
+                {
+                    int scale = Math.Max(Math.Max(day.ExpectedMinutes, day.TotalMinutes), 1);
+                    int other = Math.Max(0, day.TotalMinutes - day.BillableMinutes - day.LeaveMinutes - day.UnmappedMinutes);
+                    <div class="qh-day-bar">
+                        <span class="qh-seg-billable" style="width:@Percent(day.BillableMinutes, scale)"></span>
+                        <span class="qh-seg-leave" style="width:@Percent(day.LeaveMinutes, scale)"></span>
+                        <span class="qh-seg-other" style="width:@Percent(other, scale)"></span>
+                        <span class="qh-seg-unmapped" style="width:@Percent(day.UnmappedMinutes, scale)"></span>
+                    </div>
+                }
+                <div class="qh-day-flags">
+                    @if (!day.IsFuture && !day.IsToday && day.MissingMinutes > 0)
+                    {
+                        <span class="qh-flag qh-flag-missing">−@Ui.HoursNumber(day.MissingMinutes)</span>
+                    }
+                    @if (day.UnmappedCount > 0)
+                    {
+                        <span class="qh-flag qh-flag-unmapped">@day.UnmappedCount ?</span>
+                    }
+                    @if (day.Kind != DayKind.WorkDay && day.TotalMinutes > 0)
+                    {
+                        <span class="qh-flag qh-flag-extra">extra</span>
+                    }
+                </div>
+            </div>
+        }
+        <div class="qh-day qh-day-weektotal">
+            <div class="qh-week-hours">@(weekMinutes > 0 ? Ui.HoursNumber(weekMinutes) : "")</div>
+        </div>
+    }
+</div>
+
+@code {
+    private static readonly string[] DayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+    [Parameter, EditorRequired] public PeriodTimesheet Sheet { get; set; } = default!;
+    [Parameter] public EventCallback<DateOnly> OnDayClick { get; set; }
+
+    private IEnumerable<List<DateOnly?>> Weeks()
+    {
+        DateOnly start = Sheet.Period.Start;
+        DateOnly cursor = start.AddDays(-(((int)start.DayOfWeek + 6) % 7));
+        while (cursor < Sheet.Period.End)
+        {
+            List<DateOnly?> week = [];
+            for (int day = 0; day < 7; day++)
+            {
+                DateOnly date = cursor.AddDays(day);
+                week.Add(Sheet.Period.Contains(date) ? date : null);
+            }
+
+            yield return week;
+            cursor = cursor.AddDays(7);
+        }
+    }
+
+    private string Classes(DaySummary day)
+    {
+        List<string> classes = ["qh-day"];
+        if (day.Kind == DayKind.Weekend) classes.Add("qh-day-weekend");
+        if (day.Kind == DayKind.PublicHoliday) classes.Add("qh-day-holiday-cell");
+        if (day.IsFuture) classes.Add("qh-day-future");
+        if (day.Date == Workspace.Today) classes.Add("qh-day-today");
+        if (!day.IsFuture && !day.IsToday && day.MissingMinutes > 0) classes.Add("qh-day-short");
+        if (!day.IsFuture && day.ExpectedMinutes > 0 && day.MissingMinutes == 0) classes.Add("qh-day-complete");
+        return string.Join(' ', classes);
+    }
+
+    private static string Percent(int minutes, int scale) =>
+        (Math.Clamp(minutes * 100.0 / scale, 0, 100)).ToString("0.##", CultureInfo.InvariantCulture) + "%";
+
+    private static string Tooltip(DaySummary day)
+    {
+        string text = $"{Ui.LongDay(day.Date)}\nLogged {Ui.Hours(day.TotalMinutes)} · billable {Ui.Hours(day.BillableMinutes)}\n{day.Location.Name} ({Ui.OriginLabel(day.Location.Origin)})";
+        if (!day.IsFuture && day.MissingMinutes > 0)
+        {
+            text += $"\nMissing {Ui.Hours(day.MissingMinutes)}";
+        }
+
+        if (day.UnmappedCount > 0)
+        {
+            text += $"\n{Ui.Plural(day.UnmappedCount, "unmapped activity", "unmapped activities")}";
+        }
+
+        return text;
+    }
+}

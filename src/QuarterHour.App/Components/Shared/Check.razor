@@ -1,0 +1,17 @@
+<div class="@($"qh-check {(Info ? "qh-check-info" : Ok ? "qh-check-ok" : "qh-check-bad")}")">
+    <MudIcon Icon="@(Info ? Icons.Material.Outlined.Info : Ok ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Warning)" Size="Size.Small" />
+    <span>@(Ok || Info ? Good : Bad)</span>
+    @if (!Ok && !Info && Href is not null)
+    {
+        <MudLink Href="@Href" Class="ml-2">@Action</MudLink>
+    }
+</div>
+
+@code {
+    [Parameter] public bool Ok { get; set; }
+    [Parameter] public bool Info { get; set; }
+    [Parameter] public string? Good { get; set; }
+    [Parameter] public string? Bad { get; set; }
+    [Parameter] public string? Href { get; set; }
+    [Parameter] public string? Action { get; set; }
+}

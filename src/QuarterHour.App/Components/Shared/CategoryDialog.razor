@@ -1,0 +1,69 @@
+@inject WorkspaceService Workspace
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <MudTextField T="string" @bind-Value="Category.Group" Label="Project" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true"
+                          HelperText="The Timesheet system's Project, e.g. the client project, Meetings and Reviews or Social Events" />
+            @if (Projects.Count > 0)
+            {
+                <div class="qh-chip-row">
+                    @foreach (string project in Projects)
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" OnClick="() => Category.Group = project">@project</MudChip>
+                    }
+                </div>
+            }
+            <MudTextField T="string" @bind-Value="Category.Name" Label="Category" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true"
+                          HelperText="The Timesheet system's Category, e.g. Meetings, Analysis or Team Building Attendance" />
+            <MudTextField T="string" @bind-Value="Category.Code" Label="Code (optional)" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            <MudStack Row="true" Spacing="4">
+                <MudSwitch T="bool" @bind-Value="Category.Billable" Color="Color.Success" Label="Billable" />
+                <MudSwitch T="bool" @bind-Value="Category.IsLeave" Color="Color.Info" Label="Leave" />
+                <MudSwitch T="bool" @bind-Value="Category.Archived" Color="Color.Default" Label="Archived" />
+            </MudStack>
+            <div>
+                <MudText Typo="Typo.caption" Class="qh-muted">Colour</MudText>
+                <div class="qh-swatches">
+                    @foreach (string color in Swatches)
+                    {
+                        <button type="button" class="@($"qh-swatch {(string.Equals(Category.Color, color, StringComparison.OrdinalIgnoreCase) ? "qh-swatch-on" : "")}")" style="background:@color"
+                                @onclick="() => Category.Color = color" aria-label="@color"></button>
+                    }
+                </div>
+            </div>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => Dialog.Cancel()">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="string.IsNullOrWhiteSpace(Category.Name)" OnClick="Save">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private static readonly string[] Swatches =
+    [
+        "#2563eb", "#0891b2", "#4f46e5", "#0d9488", "#7c3aed", "#9333ea", "#a855f7", "#c026d3", "#db2777", "#be123c",
+        "#dc2626", "#ea580c", "#f97316", "#ca8a04", "#65a30d", "#16a34a", "#0f766e", "#475569",
+    ];
+
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>A copy of the category to edit.</summary>
+    [Parameter] public Category Category { get; set; } = new();
+
+    private List<string> Projects => Workspace.Config.Categories.Select(category => category.Group).Where(group => group.Length > 0).Distinct().Order().ToList();
+
+    protected override void OnInitialized()
+    {
+        Category.Color ??= Ui.NextColor(Workspace.Config.Categories);
+    }
+
+    private void Save()
+    {
+        Category.Group = Category.Group.Trim();
+        Category.Name = Category.Name.Trim();
+        Category.Code = string.IsNullOrWhiteSpace(Category.Code) ? null : Category.Code.Trim();
+        Dialog.Close(DialogResult.Ok(Category));
+    }
+}

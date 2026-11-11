@@ -1,0 +1,102 @@
+﻿@inherits LayoutComponentBase
+@implements IDisposable
+@inject UiState UiState
+@inject WorkspaceService Workspace
+@inject ISnackbar Snackbar
+
+<MudThemeProvider Theme="Ui.Theme" @bind-IsDarkMode="_dark" />
+<MudPopoverProvider />
+<MudDialogProvider CloseOnEscapeKey="true" />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="0" Dense="false" Class="qh-appbar">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="() => _drawer = !_drawer" aria-label="Toggle navigation" />
+        <div class="qh-brand">
+            <span class="qh-brand-mark">¼</span>
+            <span class="qh-brand-name">QuarterHour</span>
+        </div>
+        <MudSpacer />
+        <PeriodSwitcher />
+        <MudSpacer />
+        <MudTooltip Text="Sync the calendar and rescan agent sessions for this period">
+            <MudButton Variant="Variant.Text" Color="Color.Inherit" StartIcon="@Icons.Material.Filled.Sync" Disabled="_syncing" OnClick="SyncAsync">
+                @(_syncing ? "Syncing…" : "Sync")
+            </MudButton>
+        </MudTooltip>
+        <MudTooltip Text="@(_dark ? "Light mode" : "Dark mode")">
+            <MudIconButton Icon="@(_dark ? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)" Color="Color.Inherit" OnClick="ToggleDark" />
+        </MudTooltip>
+    </MudAppBar>
+    <MudDrawer @bind-Open="_drawer" ClipMode="DrawerClipMode.Always" Elevation="0" Variant="DrawerVariant.Mini" OpenMiniOnHover="false" Class="qh-drawer">
+        <NavMenu />
+    </MudDrawer>
+    <MudMainContent>
+        <div class="qh-content">
+            @Body
+        </div>
+    </MudMainContent>
+</MudLayout>
+
+<div id="blazor-error-ui" data-nosnippet>
+    Something went wrong.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+@code {
+    private bool _drawer = true;
+    private bool _dark;
+    private bool _syncing;
+
+    protected override void OnInitialized()
+    {
+        _dark = UiState.DarkMode;
+        UiState.PeriodChanged += OnPeriodChanged;
+    }
+
+    private void OnPeriodChanged() => InvokeAsync(StateHasChanged);
+
+    private void ToggleDark()
+    {
+        _dark = !_dark;
+        UiState.DarkMode = _dark;
+    }
+
+    private async Task SyncAsync()
+    {
+        _syncing = true;
+        try
+        {
+            TimesheetPeriod period = UiState.Period;
+            List<string> messages = [];
+            if (Workspace.Config.Calendar.Provider != CalendarProviderKind.None)
+            {
+                try
+                {
+                    Infrastructure.Storage.CalendarSnapshot snapshot = await Workspace.SyncCalendarAsync(period, interactive: false, deviceCode: null);
+                    messages.Add($"{Ui.Plural(snapshot.Events.Count, "calendar event")} from {snapshot.Source}");
+                }
+                catch (Exception exception)
+                {
+                    Snackbar.Add($"Calendar: {exception.Message}", Severity.Warning);
+                }
+            }
+
+            Infrastructure.Agents.AgentScanSummary scan = await Workspace.RescanAgentsAsync(period);
+            messages.Add(Ui.Plural(scan.Sessions.Count, "agent session"));
+            foreach (string problem in scan.Problems.Take(3))
+            {
+                Snackbar.Add(problem, Severity.Warning);
+            }
+
+            Snackbar.Add($"Synced {period.Name}: {string.Join(", ", messages)}.", Severity.Success);
+        }
+        finally
+        {
+            _syncing = false;
+        }
+    }
+
+    public void Dispose() => UiState.PeriodChanged -= OnPeriodChanged;
+}

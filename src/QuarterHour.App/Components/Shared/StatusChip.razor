@@ -1,0 +1,11 @@
+@{
+    (string label, Color color, string icon) = Ui.Status(Status);
+}
+<MudTooltip Text="@(Reason ?? label)">
+    <MudChip T="string" Size="Size.Small" Color="color" Variant="@(Status == ActivityStatus.Counted ? Variant.Text : Variant.Outlined)" Icon="@icon" Class="qh-status">@label</MudChip>
+</MudTooltip>
+
+@code {
+    [Parameter] public ActivityStatus Status { get; set; }
+    [Parameter] public string? Reason { get; set; }
+}

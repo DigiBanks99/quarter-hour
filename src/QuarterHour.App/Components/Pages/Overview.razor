@@ -1,0 +1,245 @@
+@page "/"
+@inherits PeriodPageBase
+@inject NavigationManager Navigation
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+
+<PageTitle>Overview · QuarterHour</PageTitle>
+
+@if (Sheet is null)
+{
+    <PageLoading Error="@LoadError" />
+}
+else
+{
+    PeriodTotals totals = Sheet.Totals;
+    bool inProgress = Sheet.Period.Contains(Workspace.Today);
+    Infrastructure.Storage.CalendarSnapshot? calendar = Workspace.CalendarSnapshot(Sheet.Period);
+
+    <div class="qh-page-head">
+        <div>
+            <MudText Typo="Typo.h4" Class="qh-title">@Sheet.Period.Name</MudText>
+            <MudText Typo="Typo.body2" Class="qh-muted">@Sheet.Period.RangeLabel · @Ui.Plural(totals.WorkDays, "working day") · @(calendar is null ? "calendar not synced" : $"calendar synced {calendar.FetchedAt.ToLocalTime():d MMM HH:mm}")</MudText>
+        </div>
+        <MudStack Row="true" Spacing="2">
+            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Outlined.AccountTree" Href="mapping">Map activities</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.FileDownload" Href="export">Export</MudButton>
+        </MudStack>
+    </div>
+
+    <MudStack Spacing="2" Class="mb-4">
+        @if (calendar is null)
+        {
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
+                There are no calendar events for this period yet. Use <b>Sync</b> at the top, or import an .ics export in <MudLink Href="settings">Settings</MudLink>.
+            </MudAlert>
+        }
+        @if (totals.BelowTarget)
+        {
+            <MudAlert Severity="@(inProgress ? Severity.Info : Severity.Warning)" Variant="Variant.Filled" Dense="true" Icon="@Icons.Material.Filled.TrackChanges">
+                Billable time is <b>@Ui.Hours(totals.BillableMinutes)</b> of the <b>@Ui.Hours(totals.TargetMinutes)</b> target:
+                <b>@Ui.Hours(totals.BillableShortfallMinutes)</b> short@(inProgress ? " so far" : "").
+                @if (totals.LeaveMinutes > 0 && Config.Targets.ReduceTargetByLeave)
+                {
+                    <span> (The target already allows for @Ui.Hours(totals.LeaveMinutes) of leave.)</span>
+                }
+            </MudAlert>
+        }
+        else
+        {
+            <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Dense="true">Billable target met: @Ui.Hours(totals.BillableMinutes) of @Ui.Hours(totals.TargetMinutes).</MudAlert>
+        }
+        @if (totals.UnmappedActivities > 0)
+        {
+            <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true">
+                @Ui.Plural(totals.UnmappedActivities, "activity", "activities") (@Ui.Hours(totals.UnmappedMinutes)) @(totals.UnmappedActivities == 1 ? "isn't" : "aren't") mapped to a category yet.
+                <MudLink Href="mapping">Map them</MudLink> so the time gets exported.
+            </MudAlert>
+        }
+    </MudStack>
+
+    <div class="qh-stats">
+        <div class="qh-stat qh-stat-primary">
+            <div class="qh-stat-label">Billable</div>
+            <div class="qh-stat-value">@Ui.HoursNumber(totals.BillableMinutes)<small> / @Ui.HoursNumber(totals.TargetMinutes) h</small></div>
+            <MudProgressLinear Color="@(totals.BelowTarget ? Color.Warning : Color.Success)" Value="@Progress(totals.BillableMinutes, totals.TargetMinutes)" Rounded="true" Size="Size.Medium" />
+        </div>
+        <div class="qh-stat">
+            <div class="qh-stat-label">Logged</div>
+            <div class="qh-stat-value">@Ui.HoursNumber(totals.TotalMinutes)<small> h</small></div>
+            <div class="qh-stat-note">of @Ui.Hours(totals.ExpectedMinutes) expected</div>
+        </div>
+        <div class="qh-stat @(totals.MissingMinutes > 0 ? "qh-stat-warn" : "")">
+            <div class="qh-stat-label">Missing</div>
+            <div class="qh-stat-value">@Ui.HoursNumber(totals.MissingMinutes)<small> h</small></div>
+            <div class="qh-stat-note">on @Ui.Plural(totals.DaysMissingTime, "day")@(inProgress ? " so far" : "")</div>
+        </div>
+        <div class="qh-stat">
+            <div class="qh-stat-label">Non-billable</div>
+            <div class="qh-stat-value">@Ui.HoursNumber(totals.NonBillableMinutes)<small> h</small></div>
+            <div class="qh-stat-note">leave @Ui.Hours(totals.LeaveMinutes)</div>
+        </div>
+        <div class="qh-stat @(totals.UnmappedActivities > 0 ? "qh-stat-warn" : "")">
+            <div class="qh-stat-label">Unmapped</div>
+            <div class="qh-stat-value">@Ui.HoursNumber(totals.UnmappedMinutes)<small> h</small></div>
+            <div class="qh-stat-note">@Ui.Plural(totals.UnmappedActivities, "activity", "activities")</div>
+        </div>
+        <div class="qh-stat">
+            <div class="qh-stat-label">Overtime days</div>
+            <div class="qh-stat-value">@totals.WeekendOrHolidayDaysWorked</div>
+            <div class="qh-stat-note">weekends and holidays worked</div>
+        </div>
+    </div>
+
+    <MudPaper Class="qh-panel" Elevation="0">
+        <div class="qh-panel-head">
+            <MudText Typo="Typo.h6">Month at a glance</MudText>
+            <div class="qh-legend">
+                <span><i class="qh-seg-billable"></i>Billable</span>
+                <span><i class="qh-seg-other"></i>Non-billable</span>
+                <span><i class="qh-seg-leave"></i>Leave</span>
+                <span><i class="qh-seg-unmapped"></i>Unmapped</span>
+            </div>
+        </div>
+        <MonthCalendar Sheet="Sheet" OnDayClick="@(date => Navigation.NavigateTo($"day/{Ui.DateKey(date)}"))" />
+    </MudPaper>
+
+    <MudGrid Spacing="3" Class="mt-1">
+        <MudItem xs="12" md="7">
+            <MudPaper Class="qh-panel" Elevation="0">
+                <MudText Typo="Typo.h6" Class="mb-2">By category</MudText>
+                @if (totals.ByCategory.Count == 0)
+                {
+                    <MudText Class="qh-muted">Nothing logged yet.</MudText>
+                }
+                else
+                {
+                    <table class="qh-table">
+                        <tbody>
+                            @foreach (CategoryTotal categoryTotal in totals.ByCategory)
+                            {
+                                Category? category = CategoryOf(categoryTotal.CategoryId);
+                                <tr>
+                                    <td><CategoryLabel Category="category" ShowBillable="true" /></td>
+                                    <td class="qh-num">@Ui.HoursNumber(categoryTotal.Minutes)</td>
+                                    <td class="qh-bar-cell">
+                                        <div class="qh-hbar"><span style="width:@BarWidth(categoryTotal.Minutes, totals.TotalMinutes);background:@Ui.ColorOf(category)"></span></div>
+                                    </td>
+                                    <td class="qh-num qh-muted">@Share(categoryTotal.Minutes, totals.TotalMinutes)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="5">
+            <MudPaper Class="qh-panel" Elevation="0">
+                <MudText Typo="Typo.h6" Class="mb-2">By location</MudText>
+                @if (totals.ByLocation.Count == 0)
+                {
+                    <MudText Class="qh-muted">Nothing logged yet.</MudText>
+                }
+                else
+                {
+                    <table class="qh-table">
+                        <tbody>
+                            @foreach (LocationTotal locationTotal in totals.ByLocation)
+                            {
+                                <tr>
+                                    <td><MudIcon Icon="@Ui.LocationIcon(locationTotal.Location)" Size="Size.Small" Class="mr-2" Style="vertical-align:middle" />@locationTotal.Location</td>
+                                    <td class="qh-num">@Ui.HoursNumber(locationTotal.Minutes)</td>
+                                    <td class="qh-num qh-muted">@Ui.Plural(locationTotal.Days, "day")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </MudPaper>
+
+            <MudPaper Class="qh-panel mt-3" Elevation="0">
+                <MudText Typo="Typo.h6" Class="mb-2">Days needing attention</MudText>
+                @{
+                    List<DaySummary> attention = Sheet.Days.Where(day => day.NeedsAttention).ToList();
+                }
+                @if (attention.Count == 0)
+                {
+                    <MudText Class="qh-muted">Every past working day has its hours and everything is mapped. 🎉</MudText>
+                }
+                else
+                {
+                    <div class="qh-attention">
+                        @foreach (DaySummary day in attention)
+                        {
+                            <a class="qh-attention-row" href="@($"day/{Ui.DateKey(day.Date)}")">
+                                <span class="qh-attention-day">@Ui.Day(day.Date)</span>
+                                <span class="qh-muted">@Ui.Hours(day.TotalMinutes) logged</span>
+                                @if (day.MissingMinutes > 0)
+                                {
+                                    <span class="qh-flag qh-flag-missing">−@Ui.Hours(day.MissingMinutes)</span>
+                                }
+                                @if (day.UnmappedCount > 0)
+                                {
+                                    <span class="qh-flag qh-flag-unmapped">@day.UnmappedCount unmapped</span>
+                                }
+                            </a>
+                        }
+                    </div>
+                    @if (attention.Any(day => day.MissingMinutes > 0))
+                    {
+                        <MudDivider Class="my-3" />
+                        <MudText Typo="Typo.body2" Class="mb-2">Fill the missing time on all of those days with one category (as manual entries you can change later):</MudText>
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                            <CategorySelect @bind-Value="_fillCategory" Placeholder="Category" Class="flex-grow-1" />
+                            <MudButton Variant="Variant.Outlined" Color="Color.Primary" Disabled="_fillCategory is null" OnClick="FillGapsAsync">Fill gaps</MudButton>
+                        </MudStack>
+                    }
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    private string? _fillCategory;
+
+    private static double Progress(int value, int target) => target <= 0 ? 100 : Math.Min(100, value * 100.0 / target);
+
+    private static string BarWidth(int minutes, int total) => total <= 0 ? "0%" : (minutes * 100.0 / total).ToString("0.##", CultureInfo.InvariantCulture) + "%";
+
+    private static string Share(int minutes, int total) => total <= 0 ? "" : (minutes * 100.0 / total).ToString("0", CultureInfo.InvariantCulture) + "%";
+
+    private async Task FillGapsAsync()
+    {
+        if (Sheet is null || _fillCategory is null)
+        {
+            return;
+        }
+
+        List<DaySummary> days = Sheet.Days.Where(day => !day.IsFuture && day.MissingMinutes > 0).ToList();
+        int minutes = days.Sum(day => day.MissingMinutes);
+        Category? category = CategoryOf(_fillCategory);
+        bool? confirmed = await Dialogs.ShowMessageBoxAsync("Fill the gaps?",
+            $"This adds {Ui.Plural(days.Count, "manual entry", "manual entries")} ({Ui.Hours(minutes)} in total) as {category?.DisplayName}.",
+            yesText: "Fill gaps", cancelText: "Cancel");
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        Workspace.UpdateJournal(journal =>
+        {
+            foreach (DaySummary day in days)
+            {
+                journal.ManualEntries.Add(new ManualEntry
+                {
+                    Date = day.Date,
+                    Minutes = day.MissingMinutes,
+                    CategoryId = _fillCategory,
+                    Description = category?.Name ?? "Work",
+                });
+            }
+        });
+        Snackbar.Add($"Added {Ui.Plural(days.Count, "manual entry", "manual entries")}.", Severity.Success);
+    }
+}

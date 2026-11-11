@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>QuarterHour.App</RootNamespace>
+    <AssemblyName>QuarterHour</AssemblyName>
+    <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+    <!-- Razor components don't carry XML docs. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MudBlazor" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\QuarterHour.Core\QuarterHour.Core.csproj" />
+    <ProjectReference Include="..\QuarterHour.Infrastructure\QuarterHour.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

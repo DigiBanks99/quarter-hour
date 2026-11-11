@@ -1,0 +1,161 @@
+@using QuarterHour.Core.Learning
+@using QuarterHour.Infrastructure.Export
+@inject WorkspaceService Workspace
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <DialogContent>
+        @if (_lessons is null)
+        {
+            <MudText Class="mb-3">
+                Upload a timesheet the Timesheet system exported (such as last month's <b>TimesheetExport.xlsx</b>). QuarterHour reads its projects and
+                categories, your recurring meetings, where you usually work on each weekday and which category fills up your days, and suggests a setup.
+                Nothing changes until you apply it.
+            </MudText>
+            <label class="qh-upload">
+                <InputFile OnChange="ReadAsync" accept=".xlsx" />
+                <MudIcon Icon="@Icons.Material.Outlined.UploadFile" />
+                <span>@(_reading ? "Reading…" : "Choose an .xlsx export")</span>
+            </label>
+            @if (_error is not null)
+            {
+                <MudAlert Severity="Severity.Error" Dense="true" Class="mt-3">@_error</MudAlert>
+            }
+        }
+        else
+        {
+            <MudText Typo="Typo.body2" Class="qh-muted mb-2">
+                @_fileName: @Ui.Plural(_lessons.Rows, "row") from @_lessons.From.ToString("d MMM", CultureInfo.InvariantCulture) to @_lessons.To.ToString("d MMM yyyy", CultureInfo.InvariantCulture).
+            </MudText>
+
+            <div class="qh-learn-section">
+                <MudCheckBox T="bool" @bind-Value="_choices.Categories" Label="@($"Categories: {NewCategories.Count} new, {Renames.Count} to rename")" Color="Color.Primary" />
+                <div class="qh-learn-list">
+                    @foreach (LearnedCategory category in Renames)
+                    {
+                        <div><MudIcon Icon="@Icons.Material.Outlined.DriveFileRenameOutline" Size="Size.Small" /> “@Workspace.Config.FindCategory(category.PlaceholderId)?.DisplayName” becomes <b>@category.Project › @category.Name</b></div>
+                    }
+                    @foreach (LearnedCategory category in NewCategories)
+                    {
+                        <div><MudIcon Icon="@Icons.Material.Outlined.AddCircleOutline" Size="Size.Small" /> <b>@category.Project › @category.Name</b> @(category.Billable ? "(billable)" : "") · @Ui.Hours(category.Minutes)</div>
+                    }
+                    @if (NewCategories.Count == 0 && Renames.Count == 0)
+                    {
+                        <div class="qh-muted">You already have every category it uses.</div>
+                    }
+                </div>
+            </div>
+
+            <div class="qh-learn-section">
+                <MudCheckBox T="bool" @bind-Value="_choices.Mappings" Label="@($"Recurring meetings: {Ui.Plural(_lessons.Mappings.Count, "mapping")}")" Color="Color.Primary" />
+                <div class="qh-learn-list">
+                    @foreach (LearnedMapping mapping in _lessons.Mappings)
+                    {
+                        <div>“@mapping.Label” → <b>@mapping.Project › @mapping.Category</b> <span class="qh-muted">(@mapping.Occurrences days@(mapping.LocationPin is null ? "" : $", always at {mapping.LocationPin}"))</span></div>
+                    }
+                    @if (_lessons.Mappings.Count == 0)
+                    {
+                        <div class="qh-muted">No recurring meetings that your rules don't already handle.</div>
+                    }
+                </div>
+            </div>
+
+            @if (_lessons.CatchAll is { } catchAll)
+            {
+                <div class="qh-learn-section">
+                    <MudCheckBox T="bool" @bind-Value="_choices.CatchAll" Label="@($"Any other meeting → {catchAll.Project} › {catchAll.Category}")" Color="Color.Primary" />
+                    <div class="qh-learn-list qh-muted">@catchAll.Rows of @catchAll.OfRows meetings were logged there. This adds a last heuristic rule; unusual meetings still show on the board.</div>
+                </div>
+            }
+
+            <div class="qh-learn-section">
+                <MudCheckBox T="bool" @bind-Value="_choices.Schedule" Label="Where you work" Color="Color.Primary" />
+                <div class="qh-learn-list">
+                    <div>Default: <b>@(_lessons.DefaultLocation ?? "—")</b></div>
+                    @foreach (LearnedScheduleDay day in _lessons.Schedule)
+                    {
+                        <div>@day.Day: <b>@day.Location</b> <span class="qh-muted">(@day.Agreeing of @day.Dates)</span></div>
+                    }
+                </div>
+            </div>
+
+            @if (_lessons.TopUp is { } topUp)
+            {
+                <div class="qh-learn-section">
+                    <MudCheckBox T="bool" @bind-Value="_choices.TopUp" Label="@($"Top up each worked day to {Workspace.Config.Targets.StandardDayHours:0.##} h with {topUp.Project} › {topUp.Category}")" Color="Color.Primary" />
+                    <div class="qh-learn-list qh-muted">That's where your multi-line “what I worked on” rows went. Agent work mapped to it supplies the description.</div>
+                </div>
+            }
+
+            @if (_lessons.Sentiments.Count > 0)
+            {
+                <div class="qh-learn-section">
+                    <MudCheckBox T="bool" @bind-Value="_choices.Sentiments" Label="@($"Sentiments: {string.Join(", ", _lessons.Sentiments)} (default {_lessons.MostCommonSentiment})")" Color="Color.Primary" />
+                </div>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => Dialog.Cancel()">Cancel</MudButton>
+        @if (_lessons is not null)
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Apply">Apply</MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    private TimesheetLessons? _lessons;
+    private readonly LearningChoices _choices = new();
+    private string? _fileName;
+    private string? _error;
+    private bool _reading;
+
+    private List<LearnedCategory> NewCategories => _lessons?.Categories.Where(category => category.IsNew && category.PlaceholderId is null).ToList() ?? [];
+    private List<LearnedCategory> Renames => _lessons?.Categories.Where(category => category.IsNew && category.PlaceholderId is not null).ToList() ?? [];
+
+    private async Task ReadAsync(InputFileChangeEventArgs args)
+    {
+        _reading = true;
+        _error = null;
+        try
+        {
+            await using Stream upload = args.File.OpenReadStream(20 * 1024 * 1024);
+            using MemoryStream buffer = new();
+            await upload.CopyToAsync(buffer);
+            buffer.Position = 0;
+            IReadOnlyList<TimesheetRow> rows = TimesheetExportReader.Read(buffer);
+            _lessons = TimesheetLearning.Learn(rows, Workspace.ConfigSnapshot());
+            _fileName = args.File.Name;
+            _choices.CatchAll = _lessons.CatchAll is not null;
+        }
+        catch (Exception exception)
+        {
+            _error = exception.Message;
+        }
+        finally
+        {
+            _reading = false;
+        }
+    }
+
+    private void Apply()
+    {
+        if (_lessons is null)
+        {
+            return;
+        }
+
+        LearningSummary? summary = null;
+        Workspace.UpdateConfig(config => summary = TimesheetLearning.Apply(_lessons, config, _choices));
+        if (summary is not null)
+        {
+            Snackbar.Add($"Applied: {summary.CategoriesAdded} categories added, {summary.CategoriesRenamed} renamed, {summary.MappingsAdded} meeting mappings, " +
+                         $"{summary.ScheduleRulesAdded} schedule rules{(summary.TopUpSet ? ", daily top-up on" : "")}.", Severity.Success);
+        }
+
+        Dialog.Close(DialogResult.Ok(true));
+    }
+}
