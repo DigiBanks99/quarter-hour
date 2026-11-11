@@ -14,7 +14,7 @@ public sealed class ExportRowsTests
     private readonly WorkspaceConfig _config = TestData.Workspace();
 
     [Test]
-    public void AMeetingIsExportedForTheTimesheetSystem()
+    public void AMeetingIsExportedForTheUploadTemplate()
     {
         _config.Rules.Add(TestData.Heuristic("Sync", "title", ConditionOperator.Contains, "sync", DefaultWorkspace.ClientMeetings));
         PeriodTimesheet sheet = Build(TestData.Meeting("m1", "Client sync", Monday.ToDateTime(new TimeOnly(10, 0)), 50));
@@ -22,17 +22,54 @@ public sealed class ExportRowsTests
         ExportTable table = ExportRows.Build(sheet, _config);
         IReadOnlyList<ExportCell> row = table.Rows.Single();
 
-        ItShouldUseTheTimesheetSystemsColumns();
-        ItShouldWriteEveryCellAsText();
-        ItShouldSplitHoursAndMinutes();
+        ItShouldUseTheUploadTemplatesColumns();
+        ItShouldWriteARealDateAndWholeNumbers();
+        ItShouldFillTheRowAsTheTemplateSpellsIt();
 
-        void ItShouldUseTheTimesheetSystemsColumns() => table.Headers.ShouldBe(
-            ["Date", "Project", "Category", "Hours", "Minutes", "Billable", "Description", "Ticket Number", "Sentiment", "Worked From"]);
+        void ItShouldUseTheUploadTemplatesColumns() => table.Headers.ShouldBe(
+            ["Date", "Project", "Category", "Hours", "Minutes", "Billable", "Description", "TicketNumber", "Sentiment", "WorkedFrom"]);
 
-        void ItShouldWriteEveryCellAsText() => row.ShouldAllBe(cell => cell.Kind == ExportCellKind.Text);
+        void ItShouldWriteARealDateAndWholeNumbers() => row.Select(cell => cell.Kind).ShouldBe([
+            ExportCellKind.Date, ExportCellKind.Text, ExportCellKind.Text, ExportCellKind.Number, ExportCellKind.Number,
+            ExportCellKind.Text, ExportCellKind.Text, ExportCellKind.Text, ExportCellKind.Text, ExportCellKind.Text,
+        ]);
 
-        void ItShouldSplitHoursAndMinutes() => row.Select(cell => cell.Display).ShouldBe(
-            ["2026-11-09", DefaultWorkspace.ClientProject, "Meetings", "0", "45", "True", "Client sync", "", "Neutral", "Home"]);
+        void ItShouldFillTheRowAsTheTemplateSpellsIt() => row.Select(cell => cell.Display).ShouldBe(
+            ["2026-11-09", DefaultWorkspace.ClientProject, "Meetings", "0", "45", "Yes", "Client sync", "", "Neutral", "Home"]);
+    }
+
+    [Test]
+    public void AnOlderConfigurationIsLoaded()
+    {
+        WorkspaceConfig config = new()
+        {
+            SchemaVersion = 1,
+            Export = new ExportProfile
+            {
+                SheetName = "Timesheet",
+                FileNameTemplate = "TimesheetExport {period}.xlsx",
+                CellsAsText = true,
+                Sentiments = ["Happy", "Neutral", "Unhappy"],
+                Columns =
+                [
+                    .. new[] { "Date", "Project", "Category", "Hours", "Minutes", "Billable", "Description", "Ticket Number", "Sentiment", "Worked From" }
+                        .Select(header => new ExportColumn { Header = header, Value = "{description}" }),
+                ],
+            },
+        };
+
+        config.Normalize();
+
+        ItShouldMoveToTheUploadTemplate();
+
+        void ItShouldMoveToTheUploadTemplate() => config.ShouldSatisfyAllConditions(
+            () => config.SchemaVersion.ShouldBe(WorkspaceConfig.CurrentSchemaVersion),
+            () => config.Export.Columns.Select(column => column.Header).ShouldBe(ExportProfile.DefaultColumns().Select(column => column.Header)),
+            () => config.Export.SheetName.ShouldBe("TimesheetUpload"),
+            () => config.Export.TableName.ShouldBe("TimesheetEntry"),
+            () => config.Export.FileNameTemplate.ShouldBe("TimesheetUpload {period}.xlsx"),
+            () => config.Export.CellsAsText.ShouldBeFalse(),
+            () => config.Export.Sentiments.ShouldBe(["Happy", "Neutral", "Sad"]));
     }
 
     [Test]

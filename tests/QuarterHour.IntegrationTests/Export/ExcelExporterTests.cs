@@ -37,23 +37,25 @@ public sealed class ExcelExporterTests
     {
         byte[] file = ExcelExporter.Export(_sheet, _config);
         using XLWorkbook workbook = new(new MemoryStream(file));
-        IXLWorksheet timesheet = workbook.Worksheet("Timesheet");
+        IXLWorksheet timesheet = workbook.Worksheet("TimesheetUpload");
 
         ItShouldBeTheOnlySheet();
-        ItShouldWriteATableLikeTheTimesheetSystem();
-        ItShouldWriteTheRowAsText();
+        ItShouldWriteATableLikeTheUploadTemplate();
+        ItShouldWriteTheRowAsTheTemplateExpects();
 
-        void ItShouldBeTheOnlySheet() => workbook.Worksheets.Select(worksheet => worksheet.Name).ShouldBe(["Timesheet"]);
+        void ItShouldBeTheOnlySheet() => workbook.Worksheets.Select(worksheet => worksheet.Name).ShouldBe(["TimesheetUpload"]);
 
-        void ItShouldWriteATableLikeTheTimesheetSystem() => timesheet.Tables.Single().ShouldSatisfyAllConditions(
-            () => timesheet.Tables.Single().Name.ShouldBe("Timesheet"),
+        void ItShouldWriteATableLikeTheUploadTemplate() => timesheet.Tables.Single().ShouldSatisfyAllConditions(
+            () => timesheet.Tables.Single().Name.ShouldBe("TimesheetEntry"),
             () => timesheet.Tables.Single().Fields.Select(field => field.Name).ShouldBe(
-                ["Date", "Project", "Category", "Hours", "Minutes", "Billable", "Description", "Ticket Number", "Sentiment", "Worked From"]));
+                ["Date", "Project", "Category", "Hours", "Minutes", "Billable", "Description", "TicketNumber", "Sentiment", "WorkedFrom"]));
 
-        void ItShouldWriteTheRowAsText() => timesheet.Row(2).Cells(1, 10).ShouldSatisfyAllConditions(
-            () => timesheet.Row(2).Cells(1, 10).Select(cell => cell.GetString()).ShouldBe(
-                ["2026-11-09", DefaultWorkspace.ClientProject, "Meetings", "0", "15", "True", "Daily standup", "", "Neutral", "Client"]),
-            () => timesheet.Cell(2, 1).DataType.ShouldBe(XLDataType.Text));
+        void ItShouldWriteTheRowAsTheTemplateExpects() => timesheet.Row(2).Cells(1, 10).ShouldSatisfyAllConditions(
+            () => timesheet.Row(2).Cells(2, 10).Select(cell => cell.GetString()).ShouldBe(
+                [DefaultWorkspace.ClientProject, "Meetings", "0", "15", "Yes", "Daily standup", "", "Neutral", "Client"]),
+            () => timesheet.Cell(2, 1).GetDateTime().ShouldBe(new DateTime(2026, 11, 9)),
+            () => timesheet.Cell(2, 4).DataType.ShouldBe(XLDataType.Number),
+            () => timesheet.Cell(2, 5).DataType.ShouldBe(XLDataType.Number));
     }
 
     [Test]
@@ -79,6 +81,6 @@ public sealed class ExcelExporterTests
 
         ItShouldAddASecondSheet();
 
-        void ItShouldAddASecondSheet() => workbook.Worksheets.Select(worksheet => worksheet.Name).ShouldBe(["Timesheet", "Summary"]);
+        void ItShouldAddASecondSheet() => workbook.Worksheets.Select(worksheet => worksheet.Name).ShouldBe(["TimesheetUpload", "Summary"]);
     }
 }

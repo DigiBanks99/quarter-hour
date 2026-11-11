@@ -15,7 +15,7 @@ public static class ExcelExporter
     {
         ExportTable table = ExportRows.Build(sheet, config);
         using XLWorkbook workbook = new();
-        string sheetName = SheetName(config.Export.SheetName, "Timesheet");
+        string sheetName = SheetName(config.Export.SheetName, ExportProfile.DefaultSheetName);
         IXLWorksheet worksheet = workbook.AddWorksheet(sheetName);
         for (int column = 0; column < table.Headers.Count; column++)
         {
@@ -35,8 +35,8 @@ public static class ExcelExporter
 
         if (config.Export.WriteAsTable && table.Headers.Count > 0)
         {
-            IXLTable excelTable = worksheet.Range(1, 1, Math.Max(2, table.Rows.Count + 1), table.Headers.Count).CreateTable(TableName(sheetName));
-            excelTable.Theme = XLTableTheme.TableStyleMedium2;
+            IXLTable excelTable = worksheet.Range(1, 1, Math.Max(2, table.Rows.Count + 1), table.Headers.Count).CreateTable(TableName(config.Export.TableName, sheetName));
+            excelTable.Theme = XLTableTheme.TableStyleMedium6;
             excelTable.ShowAutoFilter = true;
         }
         else
@@ -83,15 +83,23 @@ public static class ExcelExporter
     }
 
     /// <summary>Excel table names: letters, digits and underscores, starting with a letter.</summary>
-    private static string TableName(string sheetName)
+    private static string TableName(string? tableName, string sheetName)
     {
-        string name = new(sheetName.Where(character => char.IsLetterOrDigit(character) || character == '_').ToArray());
-        return name.Length == 0 || !char.IsLetter(name[0]) ? "Timesheet" : name;
+        foreach (string candidate in new[] { tableName ?? "", sheetName })
+        {
+            string name = new(candidate.Where(character => char.IsLetterOrDigit(character) || character == '_').ToArray());
+            if (name.Length > 0 && char.IsLetter(name[0]))
+            {
+                return name;
+            }
+        }
+
+        return ExportProfile.DefaultTableName;
     }
 
     private static void AddSummary(XLWorkbook workbook, PeriodTimesheet sheet, WorkspaceConfig config)
     {
-        IXLWorksheet summary = workbook.AddWorksheet(SheetName("Summary", "Summary") == SheetName(config.Export.SheetName, "Timesheet") ? "Summary (QuarterHour)" : "Summary");
+        IXLWorksheet summary = workbook.AddWorksheet(SheetName("Summary", "Summary") == SheetName(config.Export.SheetName, ExportProfile.DefaultSheetName) ? "Summary (QuarterHour)" : "Summary");
         PeriodTotals totals = sheet.Totals;
         int row = 1;
         summary.Cell(row, 1).Value = $"{sheet.Period.Name} ({sheet.Period.RangeLabel})";

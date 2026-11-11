@@ -96,15 +96,19 @@ else
     <MudExpansionPanels Elevation="0" Class="qh-panel-plain">
         <MudExpansionPanel Text="Export layout">
             <MudGrid Spacing="2">
-                <MudItem xs="12" md="4">
-                    <MudTextField T="string" Value="Config.Export.SheetName" ValueChanged=@(value => Save(profile => profile.SheetName = value ?? "Timesheet")) Label="Sheet name"
+                <MudItem xs="12" md="3">
+                    <MudTextField T="string" Value="Config.Export.SheetName" ValueChanged=@(value => Save(profile => profile.SheetName = value ?? ExportProfile.DefaultSheetName)) Label="Sheet name"
                                   Variant="Variant.Outlined" Margin="Margin.Dense" DebounceInterval="500" />
                 </MudItem>
-                <MudItem xs="12" md="4">
+                <MudItem xs="12" md="3">
+                    <MudTextField T="string" Value="Config.Export.TableName" ValueChanged=@(value => Save(profile => profile.TableName = string.IsNullOrWhiteSpace(value) ? ExportProfile.DefaultTableName : value)) Label="Table name"
+                                  Disabled="!Config.Export.WriteAsTable" Variant="Variant.Outlined" Margin="Margin.Dense" DebounceInterval="500" />
+                </MudItem>
+                <MudItem xs="12" md="3">
                     <MudTextField T="string" Value="Config.Export.FileNameTemplate" ValueChanged=@(value => Save(profile => profile.FileNameTemplate = value ?? "")) Label="File name"
                                   HelperText="{period} = 2026-11, {month} = November 2026" Variant="Variant.Outlined" Margin="Margin.Dense" DebounceInterval="500" />
                 </MudItem>
-                <MudItem xs="12" md="4">
+                <MudItem xs="12" md="3">
                     <MudSelect T="string" Value="Config.Export.DefaultSentiment" ValueChanged="value => Save(profile => profile.DefaultSentiment = value ?? profile.DefaultSentiment)" Label="Default sentiment"
                                Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
                         @foreach (string sentiment in Config.Export.Sentiments)
@@ -144,7 +148,7 @@ else
             }
             <MudStack Row="true" Spacing="2" Class="mt-2">
                 <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="AddColumn">Add column</MudButton>
-                <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Outlined.RestartAlt" OnClick="ResetLayout">Reset to the Timesheet system's layout</MudButton>
+                <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Outlined.RestartAlt" OnClick="ResetLayout">Reset to the upload template's layout</MudButton>
             </MudStack>
 
             <MudText Typo="Typo.subtitle2" Class="mt-4 mb-1">Tokens</MudText>
@@ -188,9 +192,11 @@ else
             ExportProfile defaults = new();
             profile.Columns = [.. ExportProfile.DefaultColumns()];
             profile.SheetName = defaults.SheetName;
+            profile.TableName = defaults.TableName;
+            profile.FileNameTemplate = defaults.FileNameTemplate;
             profile.CellsAsText = defaults.CellsAsText;
             profile.WriteAsTable = defaults.WriteAsTable;
         });
-        Snackbar.Add("Back to the Timesheet system's layout.", Severity.Info);
+        Snackbar.Add("Back to the Timesheet upload template's layout.", Severity.Info);
     }
 }

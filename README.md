@@ -1,8 +1,9 @@
 # QuarterHour
 
 Builds the monthly Entelect timesheet from your calendar and your AI agent coding sessions, then writes the
-`TimesheetExport.xlsx` the Timesheet system takes (Date, Project, Category, Hours, Minutes, Billable, Description,
-Ticket Number, Sentiment, Worked From — every cell as text, in a `Timesheet` table).
+upload file the Timesheet system imports, laid out like its `TimesheetUpload.xlsx` template: a `TimesheetUpload`
+sheet with a `TimesheetEntry` table of Date, Project, Category, Hours, Minutes, Billable (Yes/No), Description,
+TicketNumber, Sentiment (Neutral/Happy/Sad) and WorkedFrom (Home/Entelect/Client/Other).
 
 ## Run it
 
