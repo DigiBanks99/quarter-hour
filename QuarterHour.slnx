@@ -8,6 +8,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/QuarterHour.Core.Tests/QuarterHour.Core.Tests.csproj" />
+    <Project Path="tests/QuarterHour.EndToEndTests/QuarterHour.EndToEndTests.csproj" />
     <Project Path="tests/QuarterHour.IntegrationTests/QuarterHour.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/solution items/">
