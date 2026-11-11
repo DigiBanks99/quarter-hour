@@ -4,6 +4,7 @@
     <Project Path="src/QuarterHour.AppHost/QuarterHour.AppHost.csproj" />
     <Project Path="src/QuarterHour.Core/QuarterHour.Core.csproj" />
     <Project Path="src/QuarterHour.Infrastructure/QuarterHour.Infrastructure.csproj" />
+    <Project Path="src/QuarterHour.ServiceDefaults/QuarterHour.ServiceDefaults.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/QuarterHour.Core.Tests/QuarterHour.Core.Tests.csproj" />

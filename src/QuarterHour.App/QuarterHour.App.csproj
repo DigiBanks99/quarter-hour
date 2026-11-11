@@ -15,6 +15,7 @@
   <ItemGroup>
     <ProjectReference Include="..\QuarterHour.Core\QuarterHour.Core.csproj" />
     <ProjectReference Include="..\QuarterHour.Infrastructure\QuarterHour.Infrastructure.csproj" />
+    <ProjectReference Include="..\QuarterHour.ServiceDefaults\QuarterHour.ServiceDefaults.csproj" />
   </ItemGroup>
 
 </Project>
