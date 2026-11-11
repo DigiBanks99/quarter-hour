@@ -4,6 +4,8 @@ using QuarterHour.App.Components;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
+builder.AddServiceDefaults();
+
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 builder.Services.AddMudServices();
@@ -23,5 +25,6 @@ app.MapStaticAssets();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 app.MapQuarterHourEndpoints();
+app.MapDefaultEndpoints();
 
 app.Run();
