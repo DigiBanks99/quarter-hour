@@ -15,8 +15,15 @@ public sealed class GraphSignInRequiredException(string message, Exception? inne
 public sealed class GraphAuthService
 {
     private const string GraphResource = "https://graph.microsoft.com/";
+
+    // Entra shows some errors (e.g. AADSTS50105, user not assigned) on its own page and never redirects back, so the
+    // browser sign-in would wait forever. Device codes expire after 15 minutes on Entra's side anyway.
+    private static readonly TimeSpan BrowserSignInTimeout = TimeSpan.FromMinutes(3);
+    private static readonly TimeSpan DeviceCodeSignInTimeout = TimeSpan.FromMinutes(15);
+
     private readonly DataDirectory _directory;
     private readonly SemaphoreSlim _lock = new(1, 1);
+    private CancellationTokenSource? _pendingSignIn;
     private IPublicClientApplication? _application;
     private string? _applicationKey;
     private MsalCacheHelper? _cacheHelper;
@@ -69,31 +76,78 @@ public sealed class GraphAuthService
             throw new GraphSignInRequiredException("Sign in to Microsoft Graph first (Settings → Calendar).");
         }
 
-        await _lock.WaitAsync(cancellationToken);
+        return await SignInAsync(application, scopes, settings, deviceCode, cancellationToken);
+    }
+
+    /// <summary>
+    /// Runs one interactive sign-in. A new attempt cancels one that is still pending (for example, one whose browser tab
+    /// showed an error and was closed), and every attempt gives up after a time limit instead of waiting forever.
+    /// </summary>
+    private async Task<string> SignInAsync(IPublicClientApplication application, string[] scopes, GraphSettings settings,
+        Func<string, Task>? deviceCode, CancellationToken cancellationToken)
+    {
+        using CancellationTokenSource attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        TimeSpan timeout = settings.SignInMode == GraphSignInMode.DeviceCode ? DeviceCodeSignInTimeout : BrowserSignInTimeout;
+        attempt.CancelAfter(timeout);
+        CancelPendingSignIn(Interlocked.Exchange(ref _pendingSignIn, attempt));
+
         try
         {
-            AuthenticationResult result = settings.SignInMode == GraphSignInMode.DeviceCode
-                ? await application.AcquireTokenWithDeviceCode(scopes, async code =>
-                {
-                    if (deviceCode is not null)
-                    {
-                        await deviceCode(code.Message);
-                    }
-                }).ExecuteAsync(cancellationToken)
-                : await application.AcquireTokenInteractive(scopes)
-                    .WithUseEmbeddedWebView(false)
-                    .WithPrompt(Prompt.SelectAccount)
-                    .WithSystemWebViewOptions(new SystemWebViewOptions
-                    {
-                        HtmlMessageSuccess = "<html><body style='font-family:sans-serif'><h2>Signed in to QuarterHour</h2><p>You can close this tab.</p></body></html>",
-                    })
-                    .ExecuteAsync(cancellationToken);
-            return result.AccessToken;
+            await _lock.WaitAsync(attempt.Token);
+            try
+            {
+                return await AcquireInteractiveAsync(application, scopes, settings, deviceCode, attempt.Token);
+            }
+            finally
+            {
+                _lock.Release();
+            }
+        }
+        catch (Exception exception) when (attempt.IsCancellationRequested && !cancellationToken.IsCancellationRequested
+            && exception is OperationCanceledException or MsalClientException { ErrorCode: MsalError.AuthenticationCanceledError })
+        {
+            throw new GraphSignInRequiredException(
+                $"Sign-in didn't finish within {timeout.TotalMinutes:0} minutes, or a newer sign-in replaced it. If the browser showed " +
+                "an error (such as AADSTS50105), fix that first, then sign in again.", exception);
         }
         finally
         {
-            _lock.Release();
+            Interlocked.CompareExchange(ref _pendingSignIn, null, attempt);
         }
+    }
+
+    private static void CancelPendingSignIn(CancellationTokenSource? pending)
+    {
+        try
+        {
+            pending?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // That attempt finished while this one was starting.
+        }
+    }
+
+    private static async Task<string> AcquireInteractiveAsync(IPublicClientApplication application, string[] scopes, GraphSettings settings,
+        Func<string, Task>? deviceCode, CancellationToken cancellationToken)
+    {
+        AuthenticationResult result = settings.SignInMode == GraphSignInMode.DeviceCode
+            ? await application.AcquireTokenWithDeviceCode(scopes, async code =>
+            {
+                if (deviceCode is not null)
+                {
+                    await deviceCode(code.Message);
+                }
+            }).ExecuteAsync(cancellationToken)
+            : await application.AcquireTokenInteractive(scopes)
+                .WithUseEmbeddedWebView(false)
+                .WithPrompt(Prompt.SelectAccount)
+                .WithSystemWebViewOptions(new SystemWebViewOptions
+                {
+                    HtmlMessageSuccess = "<html><body style='font-family:sans-serif'><h2>Signed in to QuarterHour</h2><p>You can close this tab.</p></body></html>",
+                })
+                .ExecuteAsync(cancellationToken);
+        return result.AccessToken;
     }
 
     public async Task SignOutAsync(GraphSettings settings)
