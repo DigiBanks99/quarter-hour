@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!-- TUnit.Core and TUnit.Engine rather than the TUnit package, which also brings TUnit's assertions: Shouldly
+       is the assertion library. -->
+  <ItemGroup>
+    <PackageReference Include="ClosedXML" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="TUnit.Core" />
+    <PackageReference Include="TUnit.Engine" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\QuarterHour.Infrastructure\QuarterHour.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>
