@@ -60,6 +60,18 @@ dotnet test --solution QuarterHour.slnx       # TUnit + Shouldly
 python samples/make-sample-calendar.py         # regenerates samples/november-2026.ics
 ```
 
+`tests/QuarterHour.EndToEndTests` starts the AppHost with Aspire.Hosting.Testing (data in a temporary directory,
+agent scanners off), imports `samples/november-2026.ics` through the UI with Playwright and checks the export. It
+needs Chromium once, after a build:
+
+```powershell
+pwsh tests/QuarterHour.EndToEndTests/bin/Debug/net10.0/playwright.ps1 install chromium
+dotnet test --project tests/QuarterHour.EndToEndTests
+```
+
+CI (`.github/workflows/ci.yml`) runs the unit and integration tests on Windows. On Linux it regenerates the sample
+calendar (and fails if the committed one is stale), then runs the end-to-end tests.
+
 `src/QuarterHour.Core` is the pure domain (rules, timeline, rounding, locations, export rows, learning),
 `src/QuarterHour.Infrastructure` the readers/writers (Graph, Outlook, .ics, agent stores, AgentsView, ClosedXML),
 `src/QuarterHour.App` the Blazor Server + MudBlazor UI (`wwwroot/js/mapping-board.js` draws the board's links).
