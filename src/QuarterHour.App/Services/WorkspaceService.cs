@@ -31,7 +31,7 @@ public sealed class WorkspaceService
     private long _version;
 
     public WorkspaceService(WorkspaceStore store, CalendarCache calendarCache, AgentSessionScanner agentScanner, GraphAuthService graphAuth,
-        IHttpClientFactory httpClients, TimeProvider time, ILogger<WorkspaceService> logger)
+        IHttpClientFactory httpClients, TimeProvider time, ILogger<WorkspaceService> logger, IConfiguration configuration)
     {
         _store = store;
         _calendarCache = calendarCache;
@@ -42,6 +42,24 @@ public sealed class WorkspaceService
         _logger = logger;
         _config = store.LoadConfig();
         _journal = store.LoadJournal();
+        ApplyGraphDefaults(_config.Calendar.Graph, configuration.GetSection("QuarterHour:Graph"));
+    }
+
+    /// <summary>
+    /// Fills the Graph app registration from configuration (e.g. environment variables the AppHost injects) when
+    /// Settings → Calendar hasn't set it. Values saved in the workspace win.
+    /// </summary>
+    private static void ApplyGraphDefaults(GraphSettings graph, IConfiguration section)
+    {
+        if (string.IsNullOrWhiteSpace(graph.ClientId) && !string.IsNullOrWhiteSpace(section["ClientId"]))
+        {
+            graph.ClientId = section["ClientId"]!.Trim();
+        }
+
+        if ((string.IsNullOrWhiteSpace(graph.TenantId) || graph.TenantId == "organizations") && !string.IsNullOrWhiteSpace(section["TenantId"]))
+        {
+            graph.TenantId = section["TenantId"]!.Trim();
+        }
     }
 
     /// <summary>Raised after anything changes: configuration, journal, calendar sync or agent scan.</summary>
