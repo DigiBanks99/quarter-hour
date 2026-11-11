@@ -162,6 +162,15 @@ public sealed class WorkspaceService
             }
         }
 
+        return await Telemetry.TraceAsync("timesheet build", async activity =>
+        {
+            activity?.SetTag("quarterhour.period", period.Key);
+            return await BuildTimesheetAsync(period, cancellationToken);
+        });
+    }
+
+    private async Task<PeriodTimesheet> BuildTimesheetAsync(TimesheetPeriod period, CancellationToken cancellationToken)
+    {
         await _buildLock.WaitAsync(cancellationToken);
         try
         {
@@ -228,7 +237,18 @@ public sealed class WorkspaceService
     }
 
     /// <summary>Fetches the period's events from the configured calendar and caches them.</summary>
-    public async Task<CalendarSnapshot> SyncCalendarAsync(TimesheetPeriod period, bool interactive, Func<string, Task>? deviceCode, CancellationToken cancellationToken = default)
+    public Task<CalendarSnapshot> SyncCalendarAsync(TimesheetPeriod period, bool interactive, Func<string, Task>? deviceCode, CancellationToken cancellationToken = default) =>
+        Telemetry.TraceAsync("calendar sync", async activity =>
+        {
+            activity?.SetTag("quarterhour.period", period.Key);
+            activity?.SetTag("quarterhour.calendar.interactive", interactive);
+            CalendarSnapshot snapshot = await FetchCalendarAsync(period, interactive, deviceCode, cancellationToken);
+            activity?.SetTag("quarterhour.calendar.source", snapshot.Source);
+            activity?.SetTag("quarterhour.calendar.events", snapshot.Events.Count);
+            return snapshot;
+        });
+
+    private async Task<CalendarSnapshot> FetchCalendarAsync(TimesheetPeriod period, bool interactive, Func<string, Task>? deviceCode, CancellationToken cancellationToken)
     {
         WorkspaceConfig config = ConfigSnapshot();
         (DateTimeOffset from, DateTimeOffset to) = Range(period, config.General.ResolveTimeZone());
@@ -254,15 +274,19 @@ public sealed class WorkspaceService
         return snapshot;
     }
 
-    public CalendarSnapshot ImportIcs(TimesheetPeriod period, string ics, string fileName)
-    {
-        (DateTimeOffset from, DateTimeOffset to) = Range(period, TimeZone);
-        IReadOnlyList<CalendarEvent> events = IcsCalendarReader.Read(ics, from, to);
-        CalendarSnapshot snapshot = new() { FetchedAt = _time.GetUtcNow(), Source = $"Imported {fileName}", Events = [.. events] };
-        _calendarCache.Save(period.Key, snapshot);
-        Invalidate();
-        return snapshot;
-    }
+    public CalendarSnapshot ImportIcs(TimesheetPeriod period, string ics, string fileName) =>
+        Telemetry.Trace("calendar import", activity =>
+        {
+            activity?.SetTag("quarterhour.period", period.Key);
+            activity?.SetTag("quarterhour.calendar.file", fileName);
+            (DateTimeOffset from, DateTimeOffset to) = Range(period, TimeZone);
+            IReadOnlyList<CalendarEvent> events = IcsCalendarReader.Read(ics, from, to);
+            CalendarSnapshot snapshot = new() { FetchedAt = _time.GetUtcNow(), Source = $"Imported {fileName}", Events = [.. events] };
+            _calendarCache.Save(period.Key, snapshot);
+            activity?.SetTag("quarterhour.calendar.events", events.Count);
+            Invalidate();
+            return snapshot;
+        });
 
     public void ClearCalendar(TimesheetPeriod period)
     {
@@ -290,21 +314,27 @@ public sealed class WorkspaceService
             }
         }
 
-        WorkspaceConfig config = ConfigSnapshot();
-        TimeZoneInfo timeZone = config.General.ResolveTimeZone();
-        (DateTimeOffset from, DateTimeOffset to) = Range(period, timeZone);
-        AgentScanSummary summary = await _agentScanner.ScanAsync(new AgentScanRequest(from, to, config.Agents, timeZone), cancellationToken);
-        foreach (string problem in summary.Problems)
+        return await Telemetry.TraceAsync("agent scan", async activity =>
         {
-            _logger.LogWarning("Agent scan: {Problem}", problem);
-        }
+            activity?.SetTag("quarterhour.period", period.Key);
+            WorkspaceConfig config = ConfigSnapshot();
+            TimeZoneInfo timeZone = config.General.ResolveTimeZone();
+            (DateTimeOffset from, DateTimeOffset to) = Range(period, timeZone);
+            AgentScanSummary summary = await _agentScanner.ScanAsync(new AgentScanRequest(from, to, config.Agents, timeZone), cancellationToken);
+            foreach (string problem in summary.Problems)
+            {
+                _logger.LogWarning("Agent scan: {Problem}", problem);
+            }
 
-        lock (_gate)
-        {
-            _agentScans[period.Key] = summary;
-        }
+            activity?.SetTag("quarterhour.agents.sessions", summary.Sessions.Count);
+            activity?.SetTag("quarterhour.agents.problems", summary.Problems.Count);
+            lock (_gate)
+            {
+                _agentScans[period.Key] = summary;
+            }
 
-        return summary;
+            return summary;
+        });
     }
 
     private void Invalidate()

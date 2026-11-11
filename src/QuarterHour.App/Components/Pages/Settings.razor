@@ -308,12 +308,14 @@
 
     protected override async Task OnSheetLoadedAsync()
     {
+        using System.Diagnostics.Activity? ui = Telemetry.StartUiAction("check graph sign-in");
         try
         {
             _signedInAs = await Workspace.GraphAuth.SignedInAsAsync(Config.Calendar.Graph);
         }
-        catch (Exception)
+        catch (Exception exception)
         {
+            ui.Fail(exception);
             _signedInAs = null;
         }
     }
@@ -351,6 +353,7 @@
 
     private async Task SignInAndSyncAsync()
     {
+        using System.Diagnostics.Activity? ui = Telemetry.StartUiAction("sign in and sync");
         _busy = true;
         _deviceCode = null;
         try
@@ -366,6 +369,7 @@
         }
         catch (Exception exception)
         {
+            ui.Fail(exception);
             Snackbar.Add(exception.Message, Severity.Error, options => options.RequireInteraction = true);
         }
         finally
@@ -403,6 +407,7 @@
 
     private async Task ImportIcsAsync(InputFileChangeEventArgs args)
     {
+        using System.Diagnostics.Activity? ui = Telemetry.StartUiAction("import calendar");
         _busy = true;
         try
         {
@@ -413,6 +418,7 @@
         }
         catch (Exception exception)
         {
+            ui.Fail(exception);
             Snackbar.Add($"Couldn't read that calendar: {exception.Message}", Severity.Error);
         }
         finally
@@ -423,6 +429,7 @@
 
     private async Task ImportConfigAsync(InputFileChangeEventArgs args)
     {
+        using System.Diagnostics.Activity? ui = Telemetry.StartUiAction("import configuration");
         try
         {
             using StreamReader reader = new(args.File.OpenReadStream(5 * 1024 * 1024));
@@ -439,6 +446,7 @@
         }
         catch (Exception exception)
         {
+            ui.Fail(exception);
             Snackbar.Add($"Couldn't import that file: {exception.Message}", Severity.Error);
         }
     }

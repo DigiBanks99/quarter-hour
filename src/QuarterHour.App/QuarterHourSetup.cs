@@ -1,3 +1,4 @@
+using OpenTelemetry.Trace;
 using QuarterHour.App.Services;
 using QuarterHour.Core.Configuration;
 using QuarterHour.Core.Export;
@@ -18,6 +19,7 @@ public static class QuarterHourSetup
 
     public static IServiceCollection AddQuarterHour(this IServiceCollection services, IConfiguration configuration)
     {
+        services.ConfigureOpenTelemetryTracerProvider(tracing => tracing.AddSource(Telemetry.BackendSource, Telemetry.UiSource));
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton(new DataDirectory(configuration["QuarterHour:DataDirectory"]));
         services.AddSingleton<WorkspaceStore>();

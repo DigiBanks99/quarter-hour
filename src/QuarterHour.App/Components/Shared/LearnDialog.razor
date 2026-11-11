@@ -118,6 +118,7 @@
 
     private async Task ReadAsync(InputFileChangeEventArgs args)
     {
+        using System.Diagnostics.Activity? ui = Telemetry.StartUiAction("read timesheet export");
         _reading = true;
         _error = null;
         try
@@ -133,6 +134,7 @@
         }
         catch (Exception exception)
         {
+            ui.Fail(exception);
             _error = exception.Message;
         }
         finally
