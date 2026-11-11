@@ -1,0 +1,381 @@
+@page "/mapping"
+@inherits PeriodPageBase
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+@inject IDialogService Dialogs
+@inject NavigationManager Navigation
+
+<PageTitle>Mapping · QuarterHour</PageTitle>
+
+<div class="qh-page-head">
+    <div>
+        <MudText Typo="Typo.h4" Class="qh-title">Mapping board</MudText>
+        <MudText Typo="Typo.body2" Class="qh-muted">
+            Drag a meeting or project onto a category, or pull a line from its <span class="qh-port-sample"></span> handle. Solid lines are your mappings,
+            dashed lines come from <MudLink Href="rules">heuristic rules</MudLink>. Click a line or card to see more.
+        </MudText>
+    </div>
+    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Outlined.Add" OnClick="NewCategoryAsync">New category</MudButton>
+</div>
+
+@if (Sheet is null)
+{
+    <PageLoading Error="@LoadError" />
+}
+else
+{
+    <MudPaper Class="qh-panel qh-toolbar" Elevation="0">
+        <div class="qh-source-toggle">
+            <MudButton Variant="@(_source == ActivitySource.Calendar ? Variant.Filled : Variant.Outlined)" Color="Color.Primary" Size="Size.Small"
+                       StartIcon="@Icons.Material.Outlined.Event" OnClick="() => SetSource(ActivitySource.Calendar)">Meetings (@Count(ActivitySource.Calendar))</MudButton>
+            <MudButton Variant="@(_source == ActivitySource.Agent ? Variant.Filled : Variant.Outlined)" Color="Color.Primary" Size="Size.Small"
+                       StartIcon="@Icons.Material.Outlined.SmartToy" OnClick="() => SetSource(ActivitySource.Agent)">Agent work (@Count(ActivitySource.Agent))</MudButton>
+        </div>
+        <MudTextField T="string" @bind-Value="_search" Placeholder="Search" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" DebounceInterval="200" Clearable="true" Class="qh-search" />
+        <MudSelect T="string" @bind-Value="_show" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Class="qh-show">
+            <MudSelectItem T="string" Value="@("all")">Show everything</MudSelectItem>
+            <MudSelectItem T="string" Value="@("unmapped")">Needs a category</MudSelectItem>
+            <MudSelectItem T="string" Value="@("mapped")">Mapped</MudSelectItem>
+            <MudSelectItem T="string" Value="@("ignored")">Not relevant</MudSelectItem>
+            <MudSelectItem T="string" Value="@("filtered")">Filtered out</MudSelectItem>
+        </MudSelect>
+        <div class="qh-legend">
+            <span><i class="qh-legend-solid"></i>my mapping</span>
+            <span><i class="qh-legend-dashed"></i>rule</span>
+        </div>
+    </MudPaper>
+
+    @if (Selected is { } selectedGroup)
+    {
+        <MudPaper Class="qh-panel qh-detail" Elevation="0">
+            <div class="qh-detail-main">
+                <MudIcon Icon="@Ui.SourceIcon(selectedGroup.Source)" />
+                <div>
+                    <div class="qh-detail-title">@selectedGroup.Label</div>
+                    <div class="qh-muted qh-detail-meta">
+                        @Ui.Plural(selectedGroup.Occurrences, "occurrence") · @Ui.Duration(selectedGroup.RawTime) measured
+                        @if (selectedGroup.Agents.Count > 0)
+                        {
+                            <span> · @string.Join(", ", selectedGroup.Agents)</span>
+                        }
+                        @if (selectedGroup.Variants.Count > 1)
+                        {
+                            <span> · also “@string.Join("”, “", selectedGroup.Variants.Skip(1).Take(3))”</span>
+                        }
+                    </div>
+                    <div class="qh-detail-mapping">@MappingText(selectedGroup)</div>
+                </div>
+            </div>
+            <div class="qh-detail-actions">
+                @if (selectedGroup.DirectRule is not null)
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Outlined.LinkOff" OnClick="() => Unlink(selectedGroup)">Remove my mapping</MudButton>
+                }
+                <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Outlined.Rule" OnClick="() => MakeRuleAsync(selectedGroup)">Make a rule from this…</MudButton>
+                <MudMenu Label="@($"Occurrences ({selectedGroup.Items.Count})")" Size="Size.Small" Variant="Variant.Text" EndIcon="@Icons.Material.Filled.ArrowDropDown" Dense="true" MaxHeight="360">
+                    @foreach (ActivityResult item in selectedGroup.Items.Take(60))
+                    {
+                        <MudMenuItem OnClick="@(() => Navigation.NavigateTo($"day/{Ui.DateKey(item.Date)}"))">
+                            <span class="qh-occ">@Ui.Day(item.Date) @(item.Activity.IsTimed ? Ui.Time(item.Start) : "") · @Ui.Duration(item.Raw) · @Ui.Status(item.Status).Label</span>
+                        </MudMenuItem>
+                    }
+                </MudMenu>
+                <MudIconButton Icon="@Icons.Material.Outlined.Close" Size="Size.Small" OnClick="() => _selected = null" aria-label="Close details" />
+            </div>
+        </MudPaper>
+    }
+
+    <div class="qh-board" @ref="_boardElement">
+        <div class="qh-overlay" @ref="_overlayElement"></div>
+        <div class="qh-col qh-sources">
+            @if (Visible.Count == 0)
+            {
+                <div class="qh-empty">
+                    @(Groups.Count(g => g.Source == _source) == 0
+                        ? _source == ActivitySource.Calendar ? "No meetings in this period. Sync your calendar first." : "No agent sessions found in this period."
+                        : "Nothing matches this filter.")
+                </div>
+            }
+            @foreach (MappingGroup group in Visible)
+            {
+                <div class="@CardClass(group)" data-source="@group.Key" draggable="true" @onclick="() => _selected = group.Key" @key="group.Key">
+                    <div class="qh-card-title">
+                        <span class="qh-card-label">@group.Label</span>
+                        <span class="qh-card-time">@Ui.Duration(group.RawTime)</span>
+                    </div>
+                    <div class="qh-card-meta">
+                        @Ui.Plural(group.Occurrences, "time")
+                        @if (group.Agents.Count > 0)
+                        {
+                            <span> · @string.Join(", ", group.Agents)</span>
+                        }
+                        @if (group.FilteredCount > 0)
+                        {
+                            <span class="qh-card-filtered"> · @group.FilteredCount filtered</span>
+                        }
+                        @if (group.HasMixedMappings)
+                        {
+                            <span class="qh-card-mixed"> · mixed rules</span>
+                        }
+                    </div>
+                    @if (group.TargetId is { } target && target != DirectMappings.NotRelevantTarget)
+                    {
+                        <div class="qh-pins" @onclick:stopPropagation="true">
+                            <span class="qh-muted">at</span>
+                            @foreach (string location in Config.Locations.Names)
+                            {
+                                <button type="button" class="@($"qh-pin {(string.Equals(group.LocationPin, location, StringComparison.OrdinalIgnoreCase) ? "qh-pin-on" : "")}")"
+                                        title="@(string.Equals(group.LocationPin, location, StringComparison.OrdinalIgnoreCase) ? $"Pinned to {location}: click to unpin" : $"Always log this at {location}")"
+                                        @onclick="() => Pin(group, location)">
+                                    <MudIcon Icon="@Ui.LocationIcon(location)" Size="Size.Small" />
+                                </button>
+                            }
+                        </div>
+                    }
+                    <span class="qh-port qh-port-source" data-source-port="@group.Key" title="Pull a line to a category"></span>
+                </div>
+            }
+        </div>
+        <div class="qh-gap"></div>
+        <div class="qh-col qh-targets">
+            <div class="qh-target qh-target-ignore" data-target="@DirectMappings.NotRelevantTarget" title="Space blockers, reminders and personal time">
+                <span class="qh-port qh-port-target" data-target-port="@DirectMappings.NotRelevantTarget"></span>
+                <MudIcon Icon="@Icons.Material.Outlined.Block" Size="Size.Small" />
+                <span class="qh-target-name">Not relevant</span>
+                <span class="qh-target-count">@TargetCount(DirectMappings.NotRelevantTarget)</span>
+            </div>
+            @foreach (IGrouping<string, Category> project in Workspace.ActiveCategories.GroupBy(category => category.Group))
+            {
+                <div class="qh-target-group">@(string.IsNullOrWhiteSpace(project.Key) ? "Other" : project.Key)</div>
+                @foreach (Category category in project)
+                {
+                    <div class="qh-target" data-target="@category.Id" style="--c:@Ui.ColorOf(category)" title="@category.DisplayName">
+                        <span class="qh-port qh-port-target" data-target-port="@category.Id"></span>
+                        <span class="qh-cat-dot" style="background:@Ui.ColorOf(category)"></span>
+                        <span class="qh-target-name">@category.Name</span>
+                        @if (category.Billable)
+                        {
+                            <span class="qh-billable" title="Billable">$</span>
+                        }
+                        <span class="qh-target-count">@TargetCount(category.Id)</span>
+                    </div>
+                }
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private ElementReference _boardElement;
+    private ElementReference _overlayElement;
+    private IJSObjectReference? _module;
+    private IJSObjectReference? _board;
+    private DotNetObjectReference<Mapping>? _self;
+    private IReadOnlyList<MappingGroup> _groups = [];
+    private ActivitySource _source = ActivitySource.Calendar;
+    private string? _search;
+    private string _show = "all";
+    private string? _selected;
+    private bool _sourceChosen;
+
+    private IReadOnlyList<MappingGroup> Groups => _groups;
+
+    private MappingGroup? Selected => _selected is null ? null : _groups.FirstOrDefault(group => group.Key == _selected);
+
+    private List<MappingGroup> Visible => _groups
+        .Where(group => group.Source == _source)
+        .Where(group => string.IsNullOrWhiteSpace(_search)
+                        || group.Label.Contains(_search, StringComparison.OrdinalIgnoreCase)
+                        || group.Variants.Any(variant => variant.Contains(_search, StringComparison.OrdinalIgnoreCase)))
+        .Where(group => _show switch
+        {
+            "unmapped" => group.IsUnmapped && !group.IsEntirelyFiltered,
+            "mapped" => group.Mapping.Outcome == RuleOutcome.Mapped,
+            "ignored" => group.Mapping.Outcome == RuleOutcome.NotRelevant,
+            "filtered" => group.FilteredCount > 0,
+            _ => true,
+        })
+        .ToList();
+
+    protected override Task OnSheetLoadedAsync()
+    {
+        _groups = Sheet is null ? [] : MappingGroups.Build(Sheet, Workspace.ConfigSnapshot());
+        if (!_sourceChosen && _groups.Count > 0 && _groups.All(group => group.Source == ActivitySource.Agent))
+        {
+            _source = ActivitySource.Agent;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Sheet is null)
+        {
+            return;
+        }
+
+        if (_board is null)
+        {
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/mapping-board.js");
+            _self = DotNetObjectReference.Create(this);
+            _board = await _module.InvokeAsync<IJSObjectReference>("create", _boardElement, _overlayElement, _self);
+        }
+
+        List<object> links = Visible
+            .Where(group => group.TargetId is not null)
+            .Select(group => (object)new
+            {
+                source = group.Key,
+                target = group.TargetId,
+                kind = group.TargetId == DirectMappings.NotRelevantTarget ? "ignore" : group.IsDirect ? "direct" : "rule",
+                color = group.TargetId == DirectMappings.NotRelevantTarget ? "#94a3b8" : Ui.ColorOf(Config.FindCategory(group.TargetId)),
+                title = MappingText(group),
+            })
+            .ToList();
+        await _board.InvokeVoidAsync("setLinks", links, _selected);
+    }
+
+    [JSInvokable]
+    public Task OnLink(string source, string target)
+    {
+        MappingGroup? group = _groups.FirstOrDefault(candidate => candidate.Key == source);
+        if (group is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        Workspace.UpdateConfig(config => DirectMappings.Link(config.Rules, group.Key, group.Label, group.Source, target));
+        _selected = group.Key;
+        string name = target == DirectMappings.NotRelevantTarget ? "Not relevant" : Config.FindCategory(target)?.DisplayName ?? target;
+        Snackbar.Add($"{group.Label} → {name}", Severity.Success);
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnLinkClicked(string source)
+    {
+        _selected = source;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private void SetSource(ActivitySource source)
+    {
+        _source = source;
+        _sourceChosen = true;
+        _selected = null;
+    }
+
+    private int Count(ActivitySource source) => _groups.Count(group => group.Source == source);
+
+    private int TargetCount(string target) => _groups.Count(group => group.Source == _source && group.TargetId == target);
+
+    private string CardClass(MappingGroup group)
+    {
+        List<string> classes = ["qh-card"];
+        if (group.Key == _selected) classes.Add("qh-card-selected");
+        if (group.IsEntirelyFiltered) classes.Add("qh-card-dim");
+        else if (group.IsUnmapped) classes.Add("qh-card-unmapped");
+        else if (group.Mapping.Outcome == RuleOutcome.NotRelevant) classes.Add("qh-card-ignored");
+        return string.Join(' ', classes);
+    }
+
+    private string MappingText(MappingGroup group)
+    {
+        if (group.IsUnmapped)
+        {
+            return group.IsEntirelyFiltered ? "Filtered out by relevance filters" : "Needs a category";
+        }
+
+        string target = group.TargetId == DirectMappings.NotRelevantTarget ? "Not relevant" : Config.FindCategory(group.TargetId)?.DisplayName ?? "?";
+        string how = group.IsDirect ? "your mapping" : $"rule “{group.Mapping.Rule?.Name}”";
+        string pin = group.LocationPin is { } location ? $", always at {location}" : "";
+        return $"→ {target} ({how}{pin})";
+    }
+
+    private void Pin(MappingGroup group, string location)
+    {
+        string? pin = string.Equals(group.LocationPin, location, StringComparison.OrdinalIgnoreCase) ? null : location;
+        Workspace.UpdateConfig(config =>
+        {
+            Rule? current = group.Mapping.Rule is { } rule ? config.Rules.FirstOrDefault(candidate => candidate.Id == rule.Id) : null;
+            DirectMappings.Pin(config.Rules, group.Key, group.Label, group.Source, pin, current);
+        });
+        Snackbar.Add(pin is null ? $"{group.Label} follows the day's location again." : $"{group.Label} is always logged at {pin}.", Severity.Info);
+    }
+
+    private void Unlink(MappingGroup group)
+    {
+        Workspace.UpdateConfig(config => DirectMappings.Unlink(config.Rules, group.Key));
+        Snackbar.Add($"Removed the mapping for {group.Label}.", Severity.Info);
+    }
+
+    private async Task MakeRuleAsync(MappingGroup group)
+    {
+        Rule draft = new()
+        {
+            Name = group.Label,
+            Stage = RuleStage.Heuristic,
+            AppliesTo = group.Source == ActivitySource.Agent ? RuleScope.Agent : RuleScope.Calendar,
+            Conditions =
+            [
+                group.Source == ActivitySource.Agent
+                    ? new RuleCondition { Field = "project", Operator = ConditionOperator.Equals, Value = group.Label }
+                    : new RuleCondition { Field = "title", Operator = ConditionOperator.Contains, Value = group.Label },
+            ],
+            Action = group.TargetId == DirectMappings.NotRelevantTarget ? RuleAction.Ignore : RuleAction.Map,
+            CategoryId = group.TargetId == DirectMappings.NotRelevantTarget ? null : group.TargetId,
+            LocationPin = group.LocationPin,
+        };
+        DialogParameters<RuleDialog> parameters = new()
+        {
+            { dialog => dialog.Rule, draft },
+            { dialog => dialog.Activities, Sheet!.Activities.Select(item => item.Activity).DistinctBy(activity => activity.Id).ToList() },
+        };
+        IDialogReference dialog = await Dialogs.ShowAsync<RuleDialog>("New heuristic rule", parameters, new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseButton = true });
+        DialogResult? result = await dialog.Result;
+        if (result is { Canceled: false, Data: Rule rule })
+        {
+            Workspace.UpdateConfig(config => config.Rules.Add(rule));
+            Snackbar.Add($"Added the rule “{rule.Name}”.", Severity.Success);
+        }
+    }
+
+    private async Task NewCategoryAsync()
+    {
+        DialogParameters<CategoryDialog> parameters = new() { { dialog => dialog.Category, new Category() } };
+        IDialogReference dialog = await Dialogs.ShowAsync<CategoryDialog>("New category", parameters, new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true });
+        DialogResult? result = await dialog.Result;
+        if (result is { Canceled: false, Data: Category category })
+        {
+            Workspace.UpdateConfig(config => config.Categories.Add(category));
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        base.Dispose();
+        try
+        {
+            if (_board is not null)
+            {
+                await _board.InvokeVoidAsync("dispose");
+                await _board.DisposeAsync();
+            }
+
+            if (_module is not null)
+            {
+                await _module.DisposeAsync();
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+            // The browser tab is already gone.
+        }
+
+        _self?.Dispose();
+    }
+}

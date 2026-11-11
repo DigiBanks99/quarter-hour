@@ -1,0 +1,168 @@
+@inject WorkspaceService Workspace
+
+@{
+    List<ActivityResult> timed = Items.Where(item => item.Activity.IsTimed && item.End > item.Start).ToList();
+    List<ActivityResult> untimed = Items.Where(item => !item.Activity.IsTimed || item.End <= item.Start).ToList();
+    (int startHour, int endHour) = Range(timed);
+    DateTime origin = Date.ToDateTime(new TimeOnly(startHour, 0));
+    List<Lane> lanes = Lanes(timed);
+}
+
+@if (untimed.Count > 0)
+{
+    <div class="qh-untimed">
+        @foreach (ActivityResult item in untimed)
+        {
+            Category? category = Workspace.Config.FindCategory(item.CategoryId);
+            <span class="@($"qh-untimed-item {BlockClass(item)} {(item.PieceId == SelectedId ? "qh-blk-selected" : "")}")" style="--c:@Ui.ColorOf(category)" @onclick="() => OnSelect.InvokeAsync(item.PieceId)">
+                <MudIcon Icon="@Ui.SourceIcon(item.Activity.Source)" Size="Size.Small" />
+                @(item.Activity.IsAllDay ? "All day" : "No time"): @item.Description · @Ui.Duration(item.Counted)
+            </span>
+        }
+    </div>
+}
+
+<div class="qh-timeline" style="--hours:@(endHour - startHour);--lanes:@lanes.Count">
+    <div class="qh-tl-hours">
+        @for (int hour = startHour; hour < endHour; hour++)
+        {
+            <div class="qh-tl-hour"><span>@($"{hour:D2}:00")</span></div>
+        }
+    </div>
+    <div class="qh-tl-lanes">
+        @foreach (Lane lane in lanes)
+        {
+            <div class="qh-tl-lane">
+                <div class="qh-tl-lane-name"><MudIcon Icon="@Ui.SourceIcon(lane.Source)" Size="Size.Small" /> @lane.Name</div>
+                @foreach ((ActivityResult item, int column, int columns) in lane.Items)
+                {
+                    Category? category = Workspace.Config.FindCategory(item.CategoryId);
+                    double top = Math.Max(0, (item.Start - origin).TotalMinutes) * PixelsPerMinute;
+                    double height = Math.Max(18, (item.End - item.Start).TotalMinutes * PixelsPerMinute - 2);
+                    double width = 100.0 / columns;
+                    string style = $"top:{F(top)}px;height:{F(height)}px;left:calc({F(width * column)}% + 2px);width:calc({F(width)}% - 4px);--c:{Ui.ColorOf(category)}";
+                    <div class="@($"qh-blk {BlockClass(item)} {(item.PieceId == SelectedId ? "qh-blk-selected" : "")}")" style="@style"
+                         title="@Tooltip(item, category)" @onclick="() => OnSelect.InvokeAsync(item.PieceId)">
+                        <div class="qh-blk-time">@Ui.Time(item.Start)–@Ui.Time(item.End)</div>
+                        <div class="qh-blk-title">@item.Description</div>
+                    </div>
+                }
+            </div>
+        }
+        @if (Date == Workspace.Today)
+        {
+            DateTime now = TimeZoneInfo.ConvertTime(DateTime.UtcNow, Workspace.TimeZone);
+            double nowTop = (now - origin).TotalMinutes * PixelsPerMinute;
+            if (nowTop > 0 && nowTop < (endHour - startHour) * 60 * PixelsPerMinute)
+            {
+                <div class="qh-tl-now" style="top:@F(nowTop)px"></div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    private const double PixelsPerMinute = 1.1;
+
+    [Parameter, EditorRequired] public DateOnly Date { get; set; }
+    [Parameter, EditorRequired] public IReadOnlyList<ActivityResult> Items { get; set; } = [];
+    [Parameter] public string? SelectedId { get; set; }
+    [Parameter] public EventCallback<string> OnSelect { get; set; }
+
+    private sealed record Lane(string Name, ActivitySource Source, List<(ActivityResult Item, int Column, int Columns)> Items);
+
+    private static (int Start, int End) Range(List<ActivityResult> timed)
+    {
+        int start = 8;
+        int end = 17;
+        foreach (ActivityResult item in timed)
+        {
+            start = Math.Min(start, item.Start.Hour);
+            end = Math.Max(end, item.End.Date > item.Start.Date ? 24 : item.End.Hour + (item.End.Minute > 0 ? 1 : 0));
+        }
+
+        return (Math.Clamp(start, 0, 23), Math.Clamp(end, start + 1, 24));
+    }
+
+    private static List<Lane> Lanes(List<ActivityResult> timed)
+    {
+        List<Lane> lanes = [];
+        foreach ((ActivitySource source, string name) in new[] { (ActivitySource.Calendar, "Calendar"), (ActivitySource.Agent, "Agent work"), (ActivitySource.Manual, "Manual") })
+        {
+            List<ActivityResult> items = timed.Where(item => item.Activity.Source == source).OrderBy(item => item.Start).ThenByDescending(item => item.End).ToList();
+            if (items.Count == 0 && source == ActivitySource.Manual)
+            {
+                continue;
+            }
+
+            lanes.Add(new Lane(name, source, Pack(items)));
+        }
+
+        return lanes;
+    }
+
+    /// <summary>Puts overlapping blocks side by side, each cluster of overlaps sharing its width.</summary>
+    private static List<(ActivityResult, int, int)> Pack(List<ActivityResult> items)
+    {
+        List<(ActivityResult, int, int)> packed = [];
+        int index = 0;
+        while (index < items.Count)
+        {
+            List<ActivityResult> cluster = [items[index]];
+            DateTime clusterEnd = items[index].End;
+            index++;
+            while (index < items.Count && items[index].Start < clusterEnd)
+            {
+                cluster.Add(items[index]);
+                clusterEnd = clusterEnd > items[index].End ? clusterEnd : items[index].End;
+                index++;
+            }
+
+            List<DateTime> columnEnds = [];
+            List<int> columns = [];
+            foreach (ActivityResult item in cluster)
+            {
+                int column = columnEnds.FindIndex(end => end <= item.Start);
+                if (column < 0)
+                {
+                    columnEnds.Add(item.End);
+                    column = columnEnds.Count - 1;
+                }
+                else
+                {
+                    columnEnds[column] = item.End;
+                }
+
+                columns.Add(column);
+            }
+
+            for (int i = 0; i < cluster.Count; i++)
+            {
+                packed.Add((cluster[i], columns[i], columnEnds.Count));
+            }
+        }
+
+        return packed;
+    }
+
+    private static string BlockClass(ActivityResult item) => item.Status switch
+    {
+        ActivityStatus.Unmapped => "qh-blk-unmapped",
+        ActivityStatus.Counted when item.WasClipped => "qh-blk-clipped",
+        ActivityStatus.Counted => "",
+        _ => "qh-blk-hidden",
+    };
+
+    private static string Tooltip(ActivityResult item, Category? category)
+    {
+        string text = $"{item.Activity.Title}\n{Ui.Time(item.Start)}–{Ui.Time(item.End)} ({Ui.Duration(item.Raw)})\n{category?.DisplayName ?? Ui.Status(item.Status).Label}";
+        if (item.WasClipped)
+        {
+            text += $"\nCounts {Ui.Duration(item.Counted)}: overlaps other activities";
+        }
+
+        return text;
+    }
+
+    private static string F(double value) => value.ToString("0.##", CultureInfo.InvariantCulture);
+}

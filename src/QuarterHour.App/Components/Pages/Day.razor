@@ -1,0 +1,504 @@
+@page "/day"
+@page "/day/{DateText}"
+@inherits PeriodPageBase
+@inject NavigationManager Navigation
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+
+<PageTitle>@Ui.Day(_date) · QuarterHour</PageTitle>
+
+@if (Sheet is null)
+{
+    <PageLoading Error="@LoadError" />
+}
+else if (Sheet.Day(_date) is not { } day)
+{
+    <PageLoading />
+}
+else
+{
+    List<ActivityResult> all = Sheet.Activities.Where(item => item.Date == _date).ToList();
+    List<ActivityResult> visible = _showHidden ? all : all.Where(item => item.IsCounting).ToList();
+    List<TimesheetLine> lines = Sheet.Lines.Where(line => line.Date == _date).ToList();
+    int hidden = all.Count - all.Count(item => item.IsCounting);
+    DayOverride? dayOverride = Workspace.Journal.FindDay(_date);
+
+    <div class="qh-page-head">
+        <div class="qh-day-nav">
+            <MudIconButton Icon="@Icons.Material.Filled.ChevronLeft" OnClick="() => Go(_date.AddDays(-1))" aria-label="Previous day" />
+            <div>
+                <MudText Typo="Typo.h4" Class="qh-title">@Ui.LongDay(_date)</MudText>
+                <MudText Typo="Typo.body2" Class="qh-muted">
+                    @(day.Kind switch { DayKind.PublicHoliday => day.HolidayName, DayKind.Weekend => "Weekend", _ => "Working day" })
+                    @if (day.Kind != DayKind.WorkDay && day.TotalMinutes > 0)
+                    {
+                        <span> · overtime</span>
+                    }
+                    @if (day.IsFuture)
+                    {
+                        <span> · in the future</span>
+                    }
+                </MudText>
+            </div>
+            <MudIconButton Icon="@Icons.Material.Filled.ChevronRight" OnClick="() => Go(_date.AddDays(1))" aria-label="Next day" />
+            @if (_date != Workspace.Today)
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="() => Go(Workspace.Today)">Today</MudButton>
+            }
+        </div>
+        <div class="qh-day-totals">
+            <div><span class="qh-muted">Logged</span><b>@Ui.Hours(day.TotalMinutes)</b></div>
+            <div><span class="qh-muted">Billable</span><b>@Ui.Hours(day.BillableMinutes)</b></div>
+            <div class="@(day.MissingMinutes > 0 && !day.IsFuture ? "qh-warn-text" : "")"><span class="qh-muted">Missing</span><b>@Ui.Hours(day.IsFuture ? 0 : day.MissingMinutes)</b></div>
+        </div>
+    </div>
+
+    <MudPaper Class="qh-panel qh-day-settings" Elevation="0">
+        <div class="qh-day-location">
+            <LocationSelect Value="@dayOverride?.Location" ValueChanged="SetDayLocation" Label="Where I worked"
+                            NullText="@($"{AutomaticDayLocation(day)} ({(day.Location.Origin == LocationOrigin.DayOverride ? "schedule/default" : Ui.OriginLabel(day.Location.Origin))})")" />
+        </div>
+        <MudTextField T="string" Value="@dayOverride?.Note" ValueChanged="SetNote" Label="Note for the day" Variant="Variant.Outlined" Margin="Margin.Dense"
+                      DebounceInterval="600" Class="flex-grow-1" Placeholder="e.g. Client workshop in Rosebank" />
+        @if (!day.IsFuture && day.MissingMinutes > 0)
+        {
+            <div class="qh-fill">
+                <CategorySelect @bind-Value="_fillCategory" Label="@($"Fill the missing {Ui.Hours(day.MissingMinutes)} as")" />
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Disabled="_fillCategory is null" OnClick="() => FillGap(day)">Fill</MudButton>
+            </div>
+        }
+    </MudPaper>
+
+    <MudGrid Spacing="3">
+        <MudItem xs="12" lg="3">
+            <MudPaper Class="qh-panel" Elevation="0">
+                <div class="qh-panel-head">
+                    <MudText Typo="Typo.h6">Timeline</MudText>
+                    <MudSwitch T="bool" @bind-Value="_showHidden" Color="Color.Primary" Size="Size.Small" Label="@($"Show left-out ({hidden})")" />
+                </div>
+                @if (visible.Count == 0)
+                {
+                    <MudText Class="qh-muted">Nothing on this day yet.</MudText>
+                }
+                else
+                {
+                    <DayTimeline Date="_date" Items="visible" SelectedId="@_selected" OnSelect="Select" />
+                }
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" lg="9">
+            <MudPaper Class="qh-panel" Elevation="0">
+                <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" TabPanelsClass="pt-3" @bind-ActivePanelIndex="_tab">
+                    <MudTabPanel Text="@($"Activities ({visible.Count})")">
+                        @if (visible.Count == 0)
+                        {
+                            <MudText Class="qh-muted">No activities. Sync the calendar, or add a manual entry below.</MudText>
+                        }
+                        else
+                        {
+                            <div class="qh-table-wrap">
+                                <table class="qh-table qh-activities">
+                                    <thead>
+                                        <tr><th>Time</th><th>Activity</th><th>Status</th><th>Category</th><th>Location</th><th class="qh-num">Time</th><th></th></tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (ActivityResult item in visible)
+                                        {
+                                            <tr class="@(item.PieceId == _selected ? "qh-row-selected" : "")" @onclick="() => _selected = item.PieceId">
+                                                <td class="qh-nowrap">@(item.Activity.IsTimed ? $"{Ui.Time(item.Start)}–{Ui.Time(item.End)}" : item.Activity.IsAllDay ? "All day" : "—")</td>
+                                                <td>
+                                                    <div class="qh-act-title"><MudIcon Icon="@Ui.SourceIcon(item.Activity.Source)" Size="Size.Small" /> @item.Description</div>
+                                                    <div class="qh-act-meta">@Meta(item)</div>
+                                                </td>
+                                                <td><StatusChip Status="item.Status" Reason="@Reason(item)" /></td>
+                                                <td class="qh-col-category">
+                                                    @if (item.Activity.Source == ActivitySource.Manual)
+                                                    {
+                                                        <CategorySelect Value="@item.CategoryId" ValueChanged="value => SetManualCategory(item, value)" Variant="Variant.Text" Placeholder="Category" />
+                                                    }
+                                                    else if (item.Status is ActivityStatus.Counted or ActivityStatus.Unmapped)
+                                                    {
+                                                        <CategorySelect Value="@item.Override?.CategoryId" ValueChanged="value => SetCategory(item, value)" Variant="Variant.Text"
+                                                                        NullText="@AutomaticCategory(item)" />
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="qh-muted">—</span>
+                                                    }
+                                                </td>
+                                                <td class="qh-col-location">
+                                                    @if (item.IsCounting)
+                                                    {
+                                                        <LocationSelect Value="@(item.Activity.Source == ActivitySource.Manual ? item.Activity.ManualLocation : item.Override?.Location)"
+                                                                        ValueChanged="value => SetLocation(item, value)" Variant="Variant.Text"
+                                                                        NullText="@AutomaticLocation(item, day)" />
+                                                    }
+                                                </td>
+                                                <td class="qh-num qh-nowrap">
+                                                    @if (item.WasClipped)
+                                                    {
+                                                        <MudTooltip Text="@ClippedText(item, all)">
+                                                            <span class="qh-clipped">@Ui.Duration(item.Counted)<small> of @Ui.Duration(item.Raw)</small></span>
+                                                        </MudTooltip>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="@(item.IsCounting ? "" : "qh-muted")">@Ui.Duration(item.IsCounting ? item.Counted : item.Raw)</span>
+                                                    }
+                                                </td>
+                                                <td class="qh-nowrap qh-actions">
+                                                    @if (item.Activity.Source == ActivitySource.Manual)
+                                                    {
+                                                        <MudTooltip Text="Delete this manual entry">
+                                                            <MudIconButton Icon="@Icons.Material.Outlined.Delete" Size="Size.Small" OnClick="() => DeleteManual(item)" />
+                                                        </MudTooltip>
+                                                    }
+                                                    else
+                                                    {
+                                                        @if (item.IsCounting)
+                                                        {
+                                                            <MudTooltip Text="Leave out">
+                                                                <MudIconButton Icon="@Icons.Material.Outlined.RemoveCircleOutline" Size="Size.Small" OnClick="() => SetExcluded(item, true)" />
+                                                            </MudTooltip>
+                                                        }
+                                                        else
+                                                        {
+                                                            <MudTooltip Text="Count it after all">
+                                                                <MudIconButton Icon="@Icons.Material.Outlined.AddCircleOutline" Size="Size.Small" OnClick="() => SetExcluded(item, false)" />
+                                                            </MudTooltip>
+                                                        }
+                                                        <MudTooltip Text="Edit">
+                                                            <MudIconButton Icon="@Icons.Material.Outlined.Edit" Size="Size.Small" OnClick="() => EditAsync(item)" />
+                                                        </MudTooltip>
+                                                        @if (item.Override is not null)
+                                                        {
+                                                            <MudTooltip Text="Undo my changes">
+                                                                <MudIconButton Icon="@Icons.Material.Outlined.Undo" Size="Size.Small" OnClick="() => ResetOverride(item)" />
+                                                            </MudTooltip>
+                                                        }
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </MudTabPanel>
+                    <MudTabPanel Text="@($"Timesheet lines ({lines.Count})")">
+                        @if (lines.Count == 0)
+                        {
+                            <MudText Class="qh-muted">Nothing will be logged for this day.</MudText>
+                        }
+                        else
+                        {
+                            <div class="qh-table-wrap">
+                                <table class="qh-table qh-lines">
+                                    <thead>
+                                        <tr><th>Category</th><th class="qh-num">Logged</th><th>Description</th><th>Worked from</th><th>Sentiment</th><th>Ticket</th><th class="qh-num">Measured</th><th></th></tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (TimesheetLine line in lines)
+                                        {
+                                            <tr class="@(line.Minutes == 0 ? "qh-muted" : "")">
+                                                <td class="qh-line-category"><CategoryLabel Category="CategoryOf(line.CategoryId)" ShowBillable="true" /></td>
+                                                <td class="qh-num qh-col-hours">
+                                                    <MudNumericField T="decimal" Value="@((decimal)line.Minutes / 60)" ValueChanged="value => SetLine(line, change => change.Minutes = (int)Math.Round(value * 60))"
+                                                                     Variant="Variant.Text" Margin="Margin.Dense" Step="0.25m" Min="0m" Max="24m" Format="0.00" HideSpinButtons="true" DebounceInterval="800" />
+                                                </td>
+                                                <td class="qh-line-description">
+                                                    <MudTextField T="string" Value="@line.Description" ValueChanged="value => SetLine(line, change => change.Description = Changed(value, line.Description))"
+                                                                  Variant="Variant.Text" Margin="Margin.Dense" Lines="@Math.Clamp(line.Description.Split('\n').Length, 1, 6)" DebounceInterval="800"
+                                                                  Adornment="Adornment.Start" AdornmentIcon="@Ui.SourceIcon(line.Source)" />
+                                                </td>
+                                                <td class="qh-nowrap"><MudIcon Icon="@Ui.LocationIcon(line.Location)" Size="Size.Small" Style="vertical-align:middle" /> @line.Location</td>
+                                                <td class="qh-col-sentiment">
+                                                    <MudSelect T="string" Value="@line.Sentiment" ValueChanged="value => SetLine(line, change => change.Sentiment = value == Config.Export.DefaultSentiment ? null : value)"
+                                                               Variant="Variant.Text" Margin="Margin.Dense" Dense="true">
+                                                        @foreach (string sentiment in Config.Export.Sentiments)
+                                                        {
+                                                            <MudSelectItem T="string" Value="sentiment">@sentiment</MudSelectItem>
+                                                        }
+                                                    </MudSelect>
+                                                </td>
+                                                <td class="qh-col-ticket">
+                                                    <MudTextField T="string" Value="@line.Ticket" ValueChanged="value => SetLine(line, change => change.Ticket = string.IsNullOrWhiteSpace(value) ? null : value)"
+                                                                  Variant="Variant.Text" Margin="Margin.Dense" DebounceInterval="800" Placeholder="—" />
+                                                </td>
+                                                <td class="qh-num qh-muted qh-nowrap">
+                                                    @Ui.Duration(line.Raw)
+                                                    @if (line.TopUpMinutes > 0)
+                                                    {
+                                                        <div class="qh-topup" title="Added to reach the day's standard hours">+@Ui.Duration(TimeSpan.FromMinutes(line.TopUpMinutes)) top-up</div>
+                                                    }
+                                                </td>
+                                                <td class="qh-actions">
+                                                    @if (line.Override is not null)
+                                                    {
+                                                        <MudTooltip Text="Undo my changes to this line">
+                                                            <MudIconButton Icon="@Icons.Material.Outlined.Undo" Size="Size.Small" OnClick="() => ResetLine(line)" />
+                                                        </MudTooltip>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
+                                        <tr class="qh-total-row">
+                                            <td>Total</td>
+                                            <td class="qh-num"><b>@Ui.HoursNumber(lines.Sum(line => line.Minutes))</b></td>
+                                            <td colspan="6"></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <MudText Typo="Typo.caption" Class="qh-muted">
+                                Meetings are rounded one by one; agent work is added up per category and location for the day, then rounded@(Config.Targets.TopUpCategoryId is null ? "" : ", then the day is topped up").
+                                Edits here change only this line of the export.
+                            </MudText>
+                        }
+                    </MudTabPanel>
+                </MudTabs>
+            </MudPaper>
+
+            <MudPaper Class="qh-panel mt-3" Elevation="0">
+                <MudText Typo="Typo.h6" Class="mb-2">Add a manual entry</MudText>
+                <div class="qh-manual">
+                    <CategorySelect @bind-Value="_manual.CategoryId" Label="Category" />
+                    <LocationSelect @bind-Value="_manual.Location" Label="Location" NullText="Day's location" />
+                    <MudTimePicker @bind-Time="_manualStart" Label="Start (optional)" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" AmPm="false" />
+                    <MudNumericField T="decimal" @bind-Value="_manualHours" Label="Hours" Variant="Variant.Outlined" Margin="Margin.Dense" Step="0.25m" Min="0.25m" Max="24m" Format="0.##" />
+                    <MudTextField T="string" @bind-Value="_manual.Description" Label="Description" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" Disabled="_manual.CategoryId is null || _manualHours <= 0" OnClick="AddManual">Add</MudButton>
+                </div>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    [Parameter] public string? DateText { get; set; }
+
+    private DateOnly _date;
+    private string? _selected;
+    private bool _showHidden;
+    private int _tab;
+    private string? _fillCategory;
+    private ManualEntry _manual = new();
+    private TimeSpan? _manualStart;
+    private decimal _manualHours = 1;
+
+    protected override void OnParametersSet()
+    {
+        DateOnly date = DateOnly.TryParseExact(DateText, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateOnly parsed)
+            ? parsed
+            : UiState.Period.Contains(Workspace.Today) ? Workspace.Today : UiState.Period.Start;
+        if (date != _date)
+        {
+            _date = date;
+            _selected = null;
+            UiState.ShowDate(date);
+        }
+    }
+
+    private void Go(DateOnly date) => Navigation.NavigateTo($"day/{Ui.DateKey(date)}");
+
+    private void Select(string pieceId)
+    {
+        _selected = pieceId;
+        _tab = 0;
+    }
+
+    private string AutomaticDayLocation(DaySummary day)
+    {
+        if (day.Location.Origin != LocationOrigin.DayOverride)
+        {
+            return $"Automatic: {day.Location.Name}";
+        }
+
+        Journal without = new() { Days = [] };
+        ResolvedLocation automatic = new LocationResolver(Workspace.Config.Locations, without).ForDay(_date);
+        return $"Automatic: {automatic.Name}";
+    }
+
+    private static string Meta(ActivityResult item)
+    {
+        Activity activity = item.Activity;
+        return activity.Source switch
+        {
+            ActivitySource.Calendar => string.Join(" · ", new[]
+            {
+                activity.Organizer is { Length: > 0 } organizer ? $"by {organizer}" : null,
+                activity.AttendeeCount > 0 ? Ui.Plural(activity.AttendeeCount, "attendee") : "no attendees",
+                activity.EventLocation,
+                activity.ShowAs is { } showAs && showAs != "busy" ? showAs : null,
+                activity.Response is "declined" or "tentativelyAccepted" or "notResponded" ? activity.Response : null,
+            }.Where(part => !string.IsNullOrWhiteSpace(part))),
+            ActivitySource.Agent => string.Join(" · ", new[]
+            {
+                activity.Agent,
+                activity.GroupLabel,
+                activity.Branch,
+                Ui.Plural(activity.MessageCount, "message"),
+            }.Where(part => !string.IsNullOrWhiteSpace(part))),
+            _ => "Manual entry",
+        };
+    }
+
+    private static string? Reason(ActivityResult item) => item.Status switch
+    {
+        _ when item.Note is not null => item.Note,
+        ActivityStatus.Excluded => "You left this out",
+        ActivityStatus.Filtered => $"Filtered by \"{item.Match.Rule?.Name}\"",
+        ActivityStatus.NotRelevant => $"Marked not relevant by \"{item.Match.Rule?.Name}\"",
+        ActivityStatus.Unmapped => "No rule maps this yet",
+        _ when item.Override?.CategoryId is not null => "Category set by you",
+        _ when item.MappingRule is { } rule => $"Mapped by \"{rule.Name}\"",
+        _ => null,
+    };
+
+    private string AutomaticCategory(ActivityResult item) =>
+        item.MappingRule is { Action: RuleAction.Map } rule && Workspace.Config.FindCategory(rule.CategoryId) is { } category
+            ? $"Auto: {category.DisplayName}"
+            : "Unmapped";
+
+    private static string AutomaticLocation(ActivityResult item, DaySummary day) =>
+        item.Location.Origin is LocationOrigin.EntryOverride or LocationOrigin.ManualEntry
+            ? $"Auto: {day.Location.Name}"
+            : $"Auto: {item.Location.Name}{(item.Location.Origin == LocationOrigin.MeetingPin ? " (pinned)" : "")}";
+
+    private static string ClippedText(ActivityResult item, List<ActivityResult> all)
+    {
+        IEnumerable<string> names = item.OverlappedBy
+            .Select(id => all.FirstOrDefault(other => other.PieceId == id)?.Description)
+            .OfType<string>()
+            .Distinct();
+        return $"Overlaps {string.Join(", ", names)}. Meetings take precedence over agent work, and agents running at the same time share it.";
+    }
+
+    private void SetLine(TimesheetLine line, Action<LineOverride> change) => Workspace.UpdateJournal(journal =>
+    {
+        LineOverride current = journal.Lines.GetValueOrDefault(line.Id) ?? new LineOverride();
+        change(current);
+        if (current.IsEmpty)
+        {
+            journal.Lines.Remove(line.Id);
+        }
+        else
+        {
+            journal.Lines[line.Id] = current;
+        }
+    });
+
+    private void ResetLine(TimesheetLine line) => Workspace.UpdateJournal(journal => journal.Lines.Remove(line.Id));
+
+    /// <summary>Only keep a description the user actually changed.</summary>
+    private static string? Changed(string? value, string current) =>
+        string.IsNullOrWhiteSpace(value) || value.Trim() == current.Trim() ? null : value.Trim();
+
+    private void SetDayLocation(string? location) => Workspace.UpdateJournal(journal =>
+    {
+        string key = Journal.DayKey(_date);
+        DayOverride day = journal.Days.GetValueOrDefault(key) ?? new DayOverride();
+        day.Location = location;
+        journal.Days[key] = day;
+    });
+
+    private void SetNote(string? note) => Workspace.UpdateJournal(journal =>
+    {
+        string key = Journal.DayKey(_date);
+        DayOverride day = journal.Days.GetValueOrDefault(key) ?? new DayOverride();
+        day.Note = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
+        journal.Days[key] = day;
+    });
+
+    private void UpdateOverride(ActivityResult item, Action<ActivityOverride> change) => Workspace.UpdateJournal(journal =>
+    {
+        ActivityOverride current = journal.Overrides.GetValueOrDefault(item.PieceId) ?? journal.Overrides.GetValueOrDefault(item.Activity.Id) ?? new ActivityOverride();
+        change(current);
+        journal.Overrides.Remove(item.Activity.Id);
+        journal.Overrides[item.PieceId] = current;
+    });
+
+    private void SetCategory(ActivityResult item, string? categoryId) => UpdateOverride(item, current => current.CategoryId = categoryId);
+
+    private void SetLocation(ActivityResult item, string? location)
+    {
+        if (item.Activity.Source == ActivitySource.Manual)
+        {
+            UpdateManual(item, entry => entry.Location = location);
+            return;
+        }
+
+        UpdateOverride(item, current => current.Location = location);
+    }
+
+    private void SetExcluded(ActivityResult item, bool excluded) => UpdateOverride(item, current =>
+    {
+        bool wasLeftOutByRule = item.Match.Outcome is RuleOutcome.Filtered or RuleOutcome.NotRelevant;
+        current.Excluded = excluded ? true : wasLeftOutByRule ? false : null;
+    });
+
+    private void ResetOverride(ActivityResult item) => Workspace.UpdateJournal(journal =>
+    {
+        journal.Overrides.Remove(item.PieceId);
+        journal.Overrides.Remove(item.Activity.Id);
+    });
+
+    private async Task EditAsync(ActivityResult item)
+    {
+        DialogParameters<ActivityDialog> parameters = new() { { dialog => dialog.Item, item } };
+        await Dialogs.ShowAsync<ActivityDialog>("Edit activity", parameters, new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true });
+    }
+
+    private void SetManualCategory(ActivityResult item, string? categoryId) => UpdateManual(item, entry => entry.CategoryId = categoryId);
+
+    private void UpdateManual(ActivityResult item, Action<ManualEntry> change) => Workspace.UpdateJournal(journal =>
+    {
+        string id = item.Activity.Id["manual:".Length..];
+        if (journal.ManualEntries.FirstOrDefault(entry => entry.Id == id) is { } entry)
+        {
+            change(entry);
+        }
+    });
+
+    private void DeleteManual(ActivityResult item)
+    {
+        string id = item.Activity.Id["manual:".Length..];
+        Workspace.UpdateJournal(journal => journal.ManualEntries.RemoveAll(entry => entry.Id == id));
+        Snackbar.Add("Manual entry deleted.", Severity.Info);
+    }
+
+    private void FillGap(DaySummary day)
+    {
+        if (_fillCategory is null)
+        {
+            return;
+        }
+
+        Category? category = CategoryOf(_fillCategory);
+        Workspace.UpdateJournal(journal => journal.ManualEntries.Add(new ManualEntry
+        {
+            Date = _date,
+            Minutes = day.MissingMinutes,
+            CategoryId = _fillCategory,
+            Description = category?.Name ?? "Work",
+        }));
+        Snackbar.Add($"Added {Ui.Hours(day.MissingMinutes)} as {category?.DisplayName}.", Severity.Success);
+    }
+
+    private void AddManual()
+    {
+        ManualEntry entry = new()
+        {
+            Date = _date,
+            Start = _manualStart is { } start ? TimeOnly.FromTimeSpan(start) : null,
+            Minutes = (int)Math.Round(_manualHours * 60),
+            CategoryId = _manual.CategoryId,
+            Location = _manual.Location,
+            Description = string.IsNullOrWhiteSpace(_manual.Description) ? CategoryOf(_manual.CategoryId)?.Name ?? "Work" : _manual.Description.Trim(),
+        };
+        Workspace.UpdateJournal(journal => journal.ManualEntries.Add(entry));
+        _manual = new ManualEntry { CategoryId = entry.CategoryId, Location = entry.Location };
+        _manualStart = null;
+        Snackbar.Add("Manual entry added.", Severity.Success);
+    }
+}

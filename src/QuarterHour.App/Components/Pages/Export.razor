@@ -1,0 +1,196 @@
+@page "/export"
+@using QuarterHour.Core.Export
+@inherits PeriodPageBase
+@inject ISnackbar Snackbar
+
+<PageTitle>Export · QuarterHour</PageTitle>
+
+@if (Sheet is null)
+{
+    <PageLoading Error="@LoadError" />
+}
+else
+{
+    PeriodTotals totals = Sheet.Totals;
+    ExportTable table = ExportRows.Build(Sheet, Config);
+    IReadOnlyList<TimesheetLine> exported = ExportRows.LinesToExport(Sheet, Config);
+    int zeroLines = Sheet.Lines.Count(line => line.Minutes == 0 && line.CategoryId is not null);
+    int leaveMinutes = Config.Export.IncludeLeave ? 0 : totals.LeaveMinutes;
+    string fileName = ExportRows.FileName(Config.Export, Sheet.Period);
+
+    <div class="qh-page-head">
+        <div>
+            <MudText Typo="Typo.h4" Class="qh-title">Export @Sheet.Period.Name</MudText>
+            <MudText Typo="Typo.body2" Class="qh-muted">@Ui.Plural(exported.Count, "row") · @Ui.Hours(exported.Sum(line => line.Minutes)) · @fileName</MudText>
+        </div>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large" StartIcon="@Icons.Material.Filled.FileDownload"
+                   Href="@($"api/export/{Sheet.Period.Key}")" Target="_blank" Disabled="exported.Count == 0">Download .xlsx</MudButton>
+    </div>
+
+    <MudPaper Class="qh-panel mb-3" Elevation="0">
+        <MudText Typo="Typo.h6" Class="mb-2">Before you upload</MudText>
+        <div class="qh-checklist">
+            <Check Ok="totals.UnmappedActivities == 0"
+                   Good="Every activity has a category."
+                   Bad="@($"{Ui.Plural(totals.UnmappedActivities, "activity", "activities")} ({Ui.Hours(totals.UnmappedMinutes)}) still need a category and won't be exported.")"
+                   Href="mapping" Action="Map them" />
+            <Check Ok="totals.DaysMissingTime == 0"
+                   Good="No working day so far is short of hours."
+                   Bad="@($"{Ui.Plural(totals.DaysMissingTime, "working day")} {(totals.DaysMissingTime == 1 ? "is" : "are")} short: {Ui.Hours(totals.MissingMinutes)} missing.")"
+                   Href="" Action="See the days" />
+            <Check Ok="!totals.BelowTarget"
+                   Good="@($"Billable target met: {Ui.Hours(totals.BillableMinutes)} of {Ui.Hours(totals.TargetMinutes)}.")"
+                   Bad="@($"Billable time is {Ui.Hours(totals.BillableMinutes)} of the {Ui.Hours(totals.TargetMinutes)} target: {Ui.Hours(totals.BillableShortfallMinutes)} short.")" />
+            @if (zeroLines > 0 && Config.Export.SkipZeroHourRows)
+            {
+                <Check Info="true" Good="@($"{Ui.Plural(zeroLines, "line")} rounded down to 0 h and {(zeroLines == 1 ? "is" : "are")} left out.")" />
+            }
+            @if (leaveMinutes > 0)
+            {
+                <Check Info="true" Good="@($"{Ui.Hours(leaveMinutes)} of leave counts towards your days but isn't in the upload (it goes through the leave system).")" />
+            }
+            @if (totals.OverlappingActivities > 0)
+            {
+                <Check Info="true" Good="@($"{Ui.Plural(totals.OverlappingActivities, "activity", "activities")} overlapped others; overlapping minutes are counted once.")" />
+            }
+        </div>
+    </MudPaper>
+
+    <MudPaper Class="qh-panel mb-3" Elevation="0">
+        <div class="qh-panel-head">
+            <MudText Typo="Typo.h6">Preview</MudText>
+            <MudText Typo="Typo.body2" Class="qh-muted">Exactly what goes into the “@Config.Export.SheetName” sheet</MudText>
+        </div>
+        @if (table.Rows.Count == 0)
+        {
+            <MudText Class="qh-muted">Nothing to export yet.</MudText>
+        }
+        else
+        {
+            <div class="qh-table-wrap qh-preview-wrap">
+                <table class="qh-table qh-export-preview">
+                    <thead>
+                        <tr>
+                            @foreach (string header in table.Headers)
+                            {
+                                <th>@header</th>
+                            }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (IReadOnlyList<ExportCell> row in table.Rows)
+                        {
+                            <tr>
+                                @foreach (ExportCell cell in row)
+                                {
+                                    <td class="@(cell.Kind == ExportCellKind.Number ? "qh-num" : "")">@cell.Display</td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </MudPaper>
+
+    <MudExpansionPanels Elevation="0" Class="qh-panel-plain">
+        <MudExpansionPanel Text="Export layout">
+            <MudGrid Spacing="2">
+                <MudItem xs="12" md="4">
+                    <MudTextField T="string" Value="Config.Export.SheetName" ValueChanged=@(value => Save(profile => profile.SheetName = value ?? "Timesheet")) Label="Sheet name"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense" DebounceInterval="500" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField T="string" Value="Config.Export.FileNameTemplate" ValueChanged=@(value => Save(profile => profile.FileNameTemplate = value ?? "")) Label="File name"
+                                  HelperText="{period} = 2026-11, {month} = November 2026" Variant="Variant.Outlined" Margin="Margin.Dense" DebounceInterval="500" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudSelect T="string" Value="Config.Export.DefaultSentiment" ValueChanged="value => Save(profile => profile.DefaultSentiment = value ?? profile.DefaultSentiment)" Label="Default sentiment"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                        @foreach (string sentiment in Config.Export.Sentiments)
+                        {
+                            <MudSelectItem T="string" Value="sentiment">@sentiment</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField T="string" Value="@string.Join(", ", Config.Export.Sentiments)" ValueChanged="SetSentiments" Label="Sentiments to choose from"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense" DebounceInterval="700" HelperText="Comma-separated, as the Timesheet system spells them" />
+                </MudItem>
+                <MudItem xs="12">
+                    <div class="qh-switches">
+                        <MudSwitch T="bool" Value="Config.Export.CellsAsText" ValueChanged="value => Save(profile => profile.CellsAsText = value)" Color="Color.Primary" Label="Write every cell as text" />
+                        <MudSwitch T="bool" Value="Config.Export.WriteAsTable" ValueChanged="value => Save(profile => profile.WriteAsTable = value)" Color="Color.Primary" Label="Format as an Excel table" />
+                        <MudSwitch T="bool" Value="Config.Export.IncludeSummarySheet" ValueChanged="value => Save(profile => profile.IncludeSummarySheet = value)" Color="Color.Primary" Label="Add a summary sheet" />
+                        <MudSwitch T="bool" Value="Config.Export.IncludeLeave" ValueChanged="value => Save(profile => profile.IncludeLeave = value)" Color="Color.Primary" Label="Include leave" />
+                        <MudSwitch T="bool" Value="Config.Export.IncludeUnmapped" ValueChanged="value => Save(profile => profile.IncludeUnmapped = value)" Color="Color.Primary" Label="Include unmapped time" />
+                        <MudSwitch T="bool" Value="Config.Export.SkipZeroHourRows" ValueChanged="value => Save(profile => profile.SkipZeroHourRows = value)" Color="Color.Primary" Label="Skip 0 h rows" />
+                    </div>
+                </MudItem>
+            </MudGrid>
+
+            <MudText Typo="Typo.subtitle1" Class="mt-3 mb-1">Columns</MudText>
+            @for (int index = 0; index < Config.Export.Columns.Count; index++)
+            {
+                int position = index;
+                ExportColumn column = Config.Export.Columns[index];
+                <div class="qh-column-row">
+                    <MudTextField T="string" Value="column.Header" ValueChanged=@(value => Save(_ => column.Header = value ?? "")) Label="Header" Variant="Variant.Outlined" Margin="Margin.Dense" DebounceInterval="500" />
+                    <MudTextField T="string" Value="column.Value" ValueChanged=@(value => Save(_ => column.Value = value ?? "")) Label="Value" Variant="Variant.Outlined" Margin="Margin.Dense" DebounceInterval="500" />
+                    <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Size="Size.Small" Disabled="position == 0" OnClick="() => MoveColumn(position, -1)" aria-label="Move up" />
+                    <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward" Size="Size.Small" Disabled="position == Config.Export.Columns.Count - 1" OnClick="() => MoveColumn(position, 1)" aria-label="Move down" />
+                    <MudIconButton Icon="@Icons.Material.Outlined.Delete" Size="Size.Small" OnClick="() => Save(profile => profile.Columns.RemoveAt(position))" aria-label="Remove column" />
+                </div>
+            }
+            <MudStack Row="true" Spacing="2" Class="mt-2">
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="AddColumn">Add column</MudButton>
+                <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Outlined.RestartAlt" OnClick="ResetLayout">Reset to the Timesheet system's layout</MudButton>
+            </MudStack>
+
+            <MudText Typo="Typo.subtitle2" Class="mt-4 mb-1">Tokens</MudText>
+            <div class="qh-tokens">
+                @foreach (ExportToken token in ExportRows.Tokens)
+                {
+                    <div><code>@token.Token</code> <span class="qh-muted">@token.Meaning</span></div>
+                }
+            </div>
+        </MudExpansionPanel>
+    </MudExpansionPanels>
+}
+
+@code {
+    private void Save(Action<ExportProfile> change) => Workspace.UpdateConfig(config => change(config.Export));
+
+    private void SetSentiments(string? text) => Save(profile =>
+    {
+        List<string> sentiments = (text ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (sentiments.Count > 0)
+        {
+            profile.Sentiments = sentiments;
+        }
+    });
+
+    private void MoveColumn(int index, int direction) => Save(profile =>
+    {
+        int target = index + direction;
+        if (target >= 0 && target < profile.Columns.Count)
+        {
+            (profile.Columns[index], profile.Columns[target]) = (profile.Columns[target], profile.Columns[index]);
+        }
+    });
+
+    private void AddColumn() => Save(profile => profile.Columns.Add(new ExportColumn { Header = "Column", Value = "{description}" }));
+
+    private void ResetLayout()
+    {
+        Save(profile =>
+        {
+            ExportProfile defaults = new();
+            profile.Columns = [.. ExportProfile.DefaultColumns()];
+            profile.SheetName = defaults.SheetName;
+            profile.CellsAsText = defaults.CellsAsText;
+            profile.WriteAsTable = defaults.WriteAsTable;
+        });
+        Snackbar.Add("Back to the Timesheet system's layout.", Severity.Info);
+    }
+}

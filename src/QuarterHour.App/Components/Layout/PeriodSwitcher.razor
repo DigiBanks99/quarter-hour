@@ -1,0 +1,24 @@
+@implements IDisposable
+@inject UiState UiState
+@inject WorkspaceService Workspace
+
+<div class="qh-period">
+    <MudIconButton Icon="@Icons.Material.Filled.ChevronLeft" Color="Color.Inherit" Size="Size.Small" OnClick="() => UiState.SetPeriod(UiState.Period.Previous())" aria-label="Previous period" />
+    <div class="qh-period-label">
+        <div class="qh-period-name">@UiState.Period.Name</div>
+        <div class="qh-period-range">@UiState.Period.RangeLabel</div>
+    </div>
+    <MudIconButton Icon="@Icons.Material.Filled.ChevronRight" Color="Color.Inherit" Size="Size.Small" OnClick="() => UiState.SetPeriod(UiState.Period.Next())" aria-label="Next period" />
+    @if (UiState.Period != Workspace.CurrentPeriod)
+    {
+        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Inherit" Class="ml-2" OnClick="() => UiState.SetPeriod(Workspace.CurrentPeriod)">This month</MudButton>
+    }
+</div>
+
+@code {
+    protected override void OnInitialized() => UiState.PeriodChanged += OnChanged;
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => UiState.PeriodChanged -= OnChanged;
+}

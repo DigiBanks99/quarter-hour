@@ -1,0 +1,29 @@
+<span class="qh-cat @Class" title="@(Category?.DisplayName ?? EmptyText)">
+    <span class="qh-cat-dot" style="background:@Ui.ColorOf(Category)"></span>
+    @if (Category is null)
+    {
+        <span class="qh-muted">@EmptyText</span>
+    }
+    else if (ShowGroup && !string.IsNullOrWhiteSpace(Category.Group))
+    {
+        <span class="qh-cat-group">@Category.Group</span>
+        <span class="qh-cat-sep">›</span>
+        <span>@Category.Name</span>
+    }
+    else
+    {
+        <span>@Category.Name</span>
+    }
+    @if (Category is { Billable: true } && ShowBillable)
+    {
+        <span class="qh-billable" title="Billable">$</span>
+    }
+</span>
+
+@code {
+    [Parameter] public Category? Category { get; set; }
+    [Parameter] public bool ShowGroup { get; set; } = true;
+    [Parameter] public bool ShowBillable { get; set; }
+    [Parameter] public string EmptyText { get; set; } = "Unmapped";
+    [Parameter] public string? Class { get; set; }
+}

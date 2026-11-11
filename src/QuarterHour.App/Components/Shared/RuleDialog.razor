@@ -1,0 +1,226 @@
+@using FieldType = QuarterHour.Core.Rules.FieldType
+@inject WorkspaceService Workspace
+
+<MudDialog>
+    <DialogContent>
+        <MudGrid Spacing="2">
+            <MudItem xs="12" md="6">
+                <MudTextField T="string" @bind-Value="Rule.Name" Label="Name" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" />
+            </MudItem>
+            <MudItem xs="6" md="3">
+                <MudSelect T="RuleStage" @bind-Value="Rule.Stage" Label="Kind" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="RuleStage" Value="RuleStage.Filter">Relevance filter</MudSelectItem>
+                    <MudSelectItem T="RuleStage" Value="RuleStage.Direct">Direct mapping</MudSelectItem>
+                    <MudSelectItem T="RuleStage" Value="RuleStage.Heuristic">Heuristic rule</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6" md="3">
+                <MudSelect T="RuleScope" @bind-Value="Rule.AppliesTo" Label="Applies to" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="RuleScope" Value="RuleScope.Calendar">Meetings</MudSelectItem>
+                    <MudSelectItem T="RuleScope" Value="RuleScope.Agent">Agent work</MudSelectItem>
+                    <MudSelectItem T="RuleScope" Value="RuleScope.Any">Both</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+        </MudGrid>
+
+        <div class="qh-conditions">
+            <div class="qh-conditions-head">
+                <MudText Typo="Typo.subtitle2">When</MudText>
+                <MudSelect T="ConditionMatch" @bind-Value="Rule.Match" Variant="Variant.Text" Margin="Margin.Dense" Dense="true" Class="qh-match-select">
+                    <MudSelectItem T="ConditionMatch" Value="ConditionMatch.All">all of these are true</MudSelectItem>
+                    <MudSelectItem T="ConditionMatch" Value="ConditionMatch.Any">any of these is true</MudSelectItem>
+                </MudSelect>
+            </div>
+            @foreach (RuleCondition condition in Rule.Conditions)
+            {
+                FieldDefinition? field = ActivityFields.Find(condition.Field);
+                <div class="qh-condition">
+                    <MudSelect T="string" Value="condition.Field" ValueChanged="value => ChangeField(condition, value)" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Class="qh-cond-field">
+                        @foreach (FieldDefinition definition in Fields())
+                        {
+                            <MudSelectItem T="string" Value="@definition.Key">@definition.Label</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudSelect T="ConditionOperator" @bind-Value="condition.Operator" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Class="qh-cond-op">
+                        @foreach (ConditionOperator op in Operators(field?.Type ?? FieldType.Text))
+                        {
+                            <MudSelectItem T="ConditionOperator" Value="op">@OperatorLabel(op)</MudSelectItem>
+                        }
+                    </MudSelect>
+                    @if (NeedsValue(condition.Operator))
+                    {
+                        <MudTextField T="string" @bind-Value="condition.Value" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" DebounceInterval="300"
+                                      Placeholder="@(field?.Hint ?? (condition.Operator is ConditionOperator.Matches or ConditionOperator.NotMatches ? "regular expression" : "value"))"
+                                      Error="@(PatternProblem(condition) is not null)" ErrorText="@PatternProblem(condition)" Class="qh-cond-value" />
+                    }
+                    else
+                    {
+                        <div class="qh-cond-value"></div>
+                    }
+                    @if (field?.Type is FieldType.Text or FieldType.List or null && NeedsValue(condition.Operator))
+                    {
+                        <MudTooltip Text="Match upper/lower case exactly">
+                            <MudCheckBox T="bool" @bind-Value="condition.CaseSensitive" Size="Size.Small" Label="Aa" Dense="true" />
+                        </MudTooltip>
+                    }
+                    <MudIconButton Icon="@Icons.Material.Outlined.Close" Size="Size.Small" OnClick="() => Rule.Conditions.Remove(condition)" aria-label="Remove condition" />
+                </div>
+            }
+            <MudButton StartIcon="@Icons.Material.Filled.Add" Size="Size.Small" Variant="Variant.Text" OnClick="AddCondition">Add a condition</MudButton>
+        </div>
+
+        <MudGrid Spacing="2" Class="mt-1">
+            @if (Rule.Stage == RuleStage.Filter)
+            {
+                <MudItem xs="12">
+                    <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined">Relevance filters always leave the activity out, before any mapping is tried.</MudAlert>
+                </MudItem>
+            }
+            else
+            {
+                <MudItem xs="12" md="6">
+                    <CategorySelect Value="@(Rule.Action == RuleAction.Ignore ? DirectMappings.NotRelevantTarget : Rule.CategoryId)" ValueChanged="SetTarget"
+                                    Label="Then it is" IncludeNotRelevant="true" Placeholder="Choose a category" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <LocationSelect @bind-Value="Rule.LocationPin" Label="Always at (location pin)" NullText="No pin: use the day's location" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField T="string" @bind-Value="Rule.DescriptionTemplate" Label="Description (optional)" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                  Placeholder="{title}" HelperText="Tokens: {title} {organizer} {project} {branch} {agent} {eventLocation}. Empty uses the title." />
+                </MudItem>
+            }
+        </MudGrid>
+
+        <div class="qh-preview">
+            <MudText Typo="Typo.subtitle2">Matches in the selected period: @_matches.Count</MudText>
+            @foreach (Activity activity in _matches.Take(8))
+            {
+                <div class="qh-preview-row">
+                    <MudIcon Icon="@Ui.SourceIcon(activity.Source)" Size="Size.Small" />
+                    <span class="qh-muted">@Ui.Day(DateOnly.FromDateTime(activity.Start))</span>
+                    <span>@activity.Title</span>
+                </div>
+            }
+            @if (_matches.Count > 8)
+            {
+                <MudText Typo="Typo.caption" Class="qh-muted">…and @(_matches.Count - 8) more</MudText>
+            }
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => Dialog.Cancel()">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="!IsValid" OnClick="() => Dialog.Close(DialogResult.Ok(Rule))">Save rule</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>A copy of the rule to edit; the caller decides what to do with the result.</summary>
+    [Parameter] public Rule Rule { get; set; } = new();
+
+    /// <summary>Activities to preview matches against (usually the selected period's).</summary>
+    [Parameter] public IReadOnlyList<Activity> Activities { get; set; } = [];
+
+    private List<Activity> _matches = [];
+
+    private bool IsValid =>
+        !string.IsNullOrWhiteSpace(Rule.Name)
+        && Rule.Conditions.Count > 0
+        && Rule.Conditions.All(condition => PatternProblem(condition) is null)
+        && (Rule.Stage == RuleStage.Filter || Rule.Action == RuleAction.Ignore || Rule.CategoryId is not null);
+
+    protected override void OnParametersSet()
+    {
+        if (Rule.Conditions.Count == 0)
+        {
+            AddCondition();
+        }
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        List<Activity> matches = Activities.Where(activity => RuleEngine.Matches(Rule, activity)).ToList();
+        if (matches.Count != _matches.Count || !matches.SequenceEqual(_matches))
+        {
+            _matches = matches;
+            StateHasChanged();
+        }
+    }
+
+    private IEnumerable<FieldDefinition> Fields() => ActivityFields.All.Where(field =>
+        field.Scope == RuleScope.Any || Rule.AppliesTo == RuleScope.Any || field.Scope == Rule.AppliesTo);
+
+    private void AddCondition() => Rule.Conditions.Add(new RuleCondition
+    {
+        Field = "title",
+        Operator = ConditionOperator.Contains,
+    });
+
+    private static void ChangeField(RuleCondition condition, string field)
+    {
+        condition.Field = field;
+        FieldType type = ActivityFields.Find(field)?.Type ?? FieldType.Text;
+        if (!Operators(type).Contains(condition.Operator))
+        {
+            condition.Operator = Operators(type)[0];
+        }
+    }
+
+    private void SetTarget(string? target)
+    {
+        if (target == DirectMappings.NotRelevantTarget)
+        {
+            Rule.Action = RuleAction.Ignore;
+            Rule.CategoryId = null;
+            Rule.LocationPin = null;
+        }
+        else
+        {
+            Rule.Action = RuleAction.Map;
+            Rule.CategoryId = target;
+        }
+    }
+
+    private static string? PatternProblem(RuleCondition condition) =>
+        condition.Operator is ConditionOperator.Matches or ConditionOperator.NotMatches
+            ? string.IsNullOrEmpty(condition.Value) ? "Enter a pattern" : ConditionEvaluator.ValidatePattern(condition.Value)
+            : null;
+
+    private static bool NeedsValue(ConditionOperator op) =>
+        op is not (ConditionOperator.IsTrue or ConditionOperator.IsFalse or ConditionOperator.IsEmpty or ConditionOperator.IsNotEmpty);
+
+    private static IReadOnlyList<ConditionOperator> Operators(FieldType type) => type switch
+    {
+        FieldType.Boolean => [ConditionOperator.IsTrue, ConditionOperator.IsFalse],
+        FieldType.Number => [ConditionOperator.Equals, ConditionOperator.NotEquals, ConditionOperator.GreaterThan, ConditionOperator.LessThan],
+        FieldType.List => [ConditionOperator.Contains, ConditionOperator.Equals, ConditionOperator.NotContains, ConditionOperator.NotEquals, ConditionOperator.Matches, ConditionOperator.IsEmpty, ConditionOperator.IsNotEmpty],
+        _ =>
+        [
+            ConditionOperator.Contains, ConditionOperator.Equals, ConditionOperator.StartsWith, ConditionOperator.EndsWith, ConditionOperator.Matches,
+            ConditionOperator.OneOf, ConditionOperator.NotContains, ConditionOperator.NotEquals, ConditionOperator.NotMatches, ConditionOperator.IsEmpty,
+            ConditionOperator.IsNotEmpty,
+        ],
+    };
+
+    public static string OperatorLabel(ConditionOperator op) => op switch
+    {
+        ConditionOperator.Equals => "is",
+        ConditionOperator.NotEquals => "is not",
+        ConditionOperator.Contains => "contains",
+        ConditionOperator.NotContains => "doesn't contain",
+        ConditionOperator.StartsWith => "starts with",
+        ConditionOperator.EndsWith => "ends with",
+        ConditionOperator.Matches => "matches pattern",
+        ConditionOperator.NotMatches => "doesn't match pattern",
+        ConditionOperator.GreaterThan => "is more than",
+        ConditionOperator.LessThan => "is less than",
+        ConditionOperator.IsTrue => "is yes",
+        ConditionOperator.IsFalse => "is no",
+        ConditionOperator.IsEmpty => "is empty",
+        ConditionOperator.IsNotEmpty => "is not empty",
+        ConditionOperator.OneOf => "is one of",
+        _ => op.ToString(),
+    };
+}

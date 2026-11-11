@@ -1,0 +1,230 @@
+@page "/rules"
+@inherits PeriodPageBase
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+
+<PageTitle>Rules · QuarterHour</PageTitle>
+
+<div class="qh-page-head">
+    <div>
+        <MudText Typo="Typo.h4" Class="qh-title">Rules</MudText>
+        <MudText Typo="Typo.body2" Class="qh-muted">
+            Every activity goes through relevance filters first, then your direct mappings, then the heuristic rules from top to bottom.
+            The first rule that matches decides.
+        </MudText>
+    </div>
+</div>
+
+@foreach ((RuleStage stage, string title, string help) in Sections)
+{
+    List<Rule> rules = Config.Rules.Where(rule => rule.Stage == stage).ToList();
+    <MudPaper Class="qh-panel mb-3" Elevation="0">
+        <div class="qh-panel-head">
+            <div>
+                <MudText Typo="Typo.h6">@title <span class="qh-muted qh-count">@rules.Count</span></MudText>
+                <MudText Typo="Typo.body2" Class="qh-muted">@help</MudText>
+            </div>
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="() => EditAsync(null, stage)">Add</MudButton>
+        </div>
+        @if (stage == RuleStage.Direct && rules.Count > 8)
+        {
+            <MudTextField T="string" @bind-Value="_directSearch" Placeholder="Search mappings" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true"
+                          Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Clearable="true" Class="mb-2 qh-search" />
+            rules = rules.Where(rule => string.IsNullOrWhiteSpace(_directSearch) || rule.Name.Contains(_directSearch, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+        @if (rules.Count == 0)
+        {
+            <MudText Class="qh-muted">@(stage == RuleStage.Direct ? "Nothing yet: drag groups onto categories on the mapping board." : "No rules yet.")</MudText>
+        }
+        else
+        {
+            <div class="qh-table-wrap">
+                <table class="qh-table qh-rules">
+                    <thead>
+                        <tr>
+                            <th style="width:48px"></th>
+                            <th>Name</th>
+                            <th>When</th>
+                            <th>Then</th>
+                            <th class="qh-num" title="Matches in the selected period (and how many it actually decided)">Matches</th>
+                            <th style="width:150px"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (Rule rule in rules)
+                        {
+                            (int matches, int decided) = Usage(rule);
+                            <tr class="@(rule.Enabled ? "" : "qh-row-disabled")">
+                                <td><MudSwitch T="bool" Value="rule.Enabled" ValueChanged="value => Toggle(rule, value)" Color="Color.Primary" Size="Size.Small" /></td>
+                                <td>
+                                    <div class="qh-rule-name">@rule.Name</div>
+                                    <div class="qh-muted qh-small">@ScopeLabel(rule.AppliesTo)</div>
+                                </td>
+                                <td class="qh-rule-when">@Summary(rule)</td>
+                                <td>
+                                    @if (rule.Stage == RuleStage.Filter || rule.Action == RuleAction.Ignore)
+                                    {
+                                        <span class="qh-muted"><MudIcon Icon="@Icons.Material.Outlined.Block" Size="Size.Small" Style="vertical-align:middle" /> @(rule.Stage == RuleStage.Filter ? "Leave out" : "Not relevant")</span>
+                                    }
+                                    else
+                                    {
+                                        <CategoryLabel Category="CategoryOf(rule.CategoryId)" EmptyText="(missing category)" />
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(rule.LocationPin))
+                                    {
+                                        <div class="qh-small"><MudIcon Icon="@Ui.LocationIcon(rule.LocationPin)" Size="Size.Small" Style="vertical-align:middle" /> always at @rule.LocationPin</div>
+                                    }
+                                </td>
+                                <td class="qh-num">@matches <span class="qh-muted">(@decided)</span></td>
+                                <td class="qh-actions qh-nowrap">
+                                    <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Size="Size.Small" Disabled="rules.IndexOf(rule) == 0 || stage == RuleStage.Direct" OnClick="() => Move(rule, -1)" aria-label="Move up" />
+                                    <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward" Size="Size.Small" Disabled="rules.IndexOf(rule) == rules.Count - 1 || stage == RuleStage.Direct" OnClick="() => Move(rule, 1)" aria-label="Move down" />
+                                    <MudIconButton Icon="@Icons.Material.Outlined.Edit" Size="Size.Small" OnClick="() => EditAsync(rule, stage)" aria-label="Edit" />
+                                    <MudIconButton Icon="@Icons.Material.Outlined.Delete" Size="Size.Small" OnClick="() => DeleteAsync(rule)" aria-label="Delete" />
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </MudPaper>
+}
+
+@code {
+    private static readonly (RuleStage Stage, string Title, string Help)[] Sections =
+    [
+        (RuleStage.Filter, "Relevance filters", "Leave out occurrences that can't be time worked: cancelled, declined, shown as free, all-day reminders."),
+        (RuleStage.Direct, "Direct mappings", "Made on the mapping board: one meeting series or one project to one category, with an optional location pin."),
+        (RuleStage.Heuristic, "Heuristic rules", "Patterns that catch many activities at once, such as “title matches [Cc]of+ee run” or “organiser is me and the title says 1:1”."),
+    ];
+
+    private string? _directSearch;
+    private Dictionary<string, (int Matches, int Decided)> _usage = [];
+
+    protected override Task OnSheetLoadedAsync()
+    {
+        _usage = [];
+        if (Sheet is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        List<ActivityResult> distinct = Sheet.Activities.DistinctBy(result => result.Activity.Id).Where(result => result.Activity.Source != ActivitySource.Manual).ToList();
+        foreach (Rule rule in Config.Rules)
+        {
+            int matches = distinct.Count(result => RuleEngine.Matches(rule, result.Activity));
+            int decided = distinct.Count(result => result.Match.Rule?.Id == rule.Id);
+            _usage[rule.Id] = (matches, decided);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private (int Matches, int Decided) Usage(Rule rule) => _usage.GetValueOrDefault(rule.Id);
+
+    private static string ScopeLabel(RuleScope scope) => scope switch
+    {
+        RuleScope.Calendar => "meetings",
+        RuleScope.Agent => "agent work",
+        _ => "meetings and agent work",
+    };
+
+    private static string Summary(Rule rule)
+    {
+        IEnumerable<string> parts = rule.Conditions.Select(condition =>
+        {
+            string field = ActivityFields.Find(condition.Field)?.Label ?? condition.Field;
+            if (string.Equals(condition.Field, ActivityFields.GroupKey, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"it is “{rule.Name}”";
+            }
+
+            string value = condition.Operator is ConditionOperator.Matches or ConditionOperator.NotMatches ? $"/{condition.Value}/" : $"“{condition.Value}”";
+            return condition.Operator switch
+            {
+                ConditionOperator.IsTrue => field,
+                ConditionOperator.IsFalse => $"not “{field}”",
+                ConditionOperator.IsEmpty or ConditionOperator.IsNotEmpty => $"{field} {RuleDialog.OperatorLabel(condition.Operator)}",
+                _ => $"{field} {RuleDialog.OperatorLabel(condition.Operator)} {value}",
+            };
+        });
+        return string.Join(rule.Match == ConditionMatch.Any ? " or " : " and ", parts);
+    }
+
+    private void Toggle(Rule rule, bool enabled) => Workspace.UpdateConfig(config =>
+    {
+        if (config.Rules.FirstOrDefault(candidate => candidate.Id == rule.Id) is { } live)
+        {
+            live.Enabled = enabled;
+        }
+    });
+
+    private void Move(Rule rule, int direction) => Workspace.UpdateConfig(config =>
+    {
+        List<Rule> sameStage = config.Rules.Where(candidate => candidate.Stage == rule.Stage).ToList();
+        int index = sameStage.FindIndex(candidate => candidate.Id == rule.Id);
+        int swapWith = index + direction;
+        if (index < 0 || swapWith < 0 || swapWith >= sameStage.Count)
+        {
+            return;
+        }
+
+        int a = config.Rules.IndexOf(sameStage[index]);
+        int b = config.Rules.IndexOf(sameStage[swapWith]);
+        (config.Rules[a], config.Rules[b]) = (config.Rules[b], config.Rules[a]);
+    });
+
+    private async Task EditAsync(Rule? rule, RuleStage stage)
+    {
+        Rule draft = rule is null
+            ? new Rule { Stage = stage, AppliesTo = RuleScope.Calendar, Action = stage == RuleStage.Filter ? RuleAction.Ignore : RuleAction.Map }
+            : Ui.Clone(rule);
+        DialogParameters<RuleDialog> parameters = new()
+        {
+            { dialog => dialog.Rule, draft },
+            { dialog => dialog.Activities, Sheet?.Activities.Select(item => item.Activity).DistinctBy(activity => activity.Id).ToList() ?? [] },
+        };
+        IDialogReference dialog = await Dialogs.ShowAsync<RuleDialog>(rule is null ? "New rule" : "Edit rule", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseButton = true });
+        DialogResult? result = await dialog.Result;
+        if (result is not { Canceled: false, Data: Rule saved })
+        {
+            return;
+        }
+
+        Workspace.UpdateConfig(config =>
+        {
+            int index = config.Rules.FindIndex(candidate => candidate.Id == saved.Id);
+            if (index >= 0 && config.Rules[index].Stage == saved.Stage)
+            {
+                config.Rules[index] = saved;
+                return;
+            }
+
+            if (index >= 0)
+            {
+                config.Rules.RemoveAt(index);
+            }
+
+            int insertAt = saved.Stage switch
+            {
+                RuleStage.Filter => config.Rules.FindLastIndex(candidate => candidate.Stage == RuleStage.Filter) + 1,
+                RuleStage.Direct => config.Rules.FindLastIndex(candidate => candidate.Stage is RuleStage.Filter or RuleStage.Direct) + 1,
+                _ => config.Rules.Count,
+            };
+            config.Rules.Insert(Math.Clamp(insertAt, 0, config.Rules.Count), saved);
+        });
+        Snackbar.Add($"Saved “{saved.Name}”.", Severity.Success);
+    }
+
+    private async Task DeleteAsync(Rule rule)
+    {
+        bool? confirmed = await Dialogs.ShowMessageBoxAsync("Delete rule?", $"Delete “{rule.Name}”? Activities it decided will be classified by the next matching rule.",
+            yesText: "Delete", cancelText: "Cancel");
+        if (confirmed == true)
+        {
+            Workspace.UpdateConfig(config => config.Rules.RemoveAll(candidate => candidate.Id == rule.Id));
+        }
+    }
+}

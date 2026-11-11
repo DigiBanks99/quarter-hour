@@ -1,0 +1,262 @@
+@page "/locations"
+@inherits PeriodPageBase
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<PageTitle>Locations · QuarterHour</PageTitle>
+
+<div class="qh-page-head">
+    <div>
+        <MudText Typo="Typo.h4" Class="qh-title">Where you work</MudText>
+        <MudText Typo="Typo.body2" Class="qh-muted">
+            Each entry's “Worked From” comes from, in order: a change on the entry, a meeting pin, the day's own setting, the first schedule rule that fits, the default.
+        </MudText>
+    </div>
+</div>
+
+<MudGrid Spacing="3">
+    <MudItem xs="12" md="4">
+        <MudPaper Class="qh-panel" Elevation="0">
+            <MudText Typo="Typo.h6" Class="mb-2">Default</MudText>
+            <LocationSelect Value="@Config.Locations.Default" ValueChanged="value => Update(config => config.Locations.Default = value ?? config.Locations.Default)" Label="Usually I work at" />
+            <MudText Typo="Typo.subtitle2" Class="mt-4 mb-1">Locations</MudText>
+            <div class="qh-chip-row">
+                @foreach (string location in Config.Locations.Names)
+                {
+                    @if (location == Config.Locations.Default)
+                    {
+                        <MudChip T="string" Icon="@Ui.LocationIcon(location)" Variant="Variant.Filled" Color="Color.Primary">@location</MudChip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Icon="@Ui.LocationIcon(location)" Variant="Variant.Outlined" OnClose="() => RemoveLocation(location)">@location</MudChip>
+                    }
+                }
+            </div>
+            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mt-2">
+                <MudTextField T="string" @bind-Value="_newLocation" Placeholder="Add a location" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" />
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="string.IsNullOrWhiteSpace(_newLocation)" OnClick="AddLocation">Add</MudButton>
+            </MudStack>
+            <MudText Typo="Typo.caption" Class="qh-muted">The names must match the Timesheet system's “Worked From” values.</MudText>
+        </MudPaper>
+
+        <MudPaper Class="qh-panel mt-3" Elevation="0">
+            <MudText Typo="Typo.h6" Class="mb-2">Meetings pinned to a place</MudText>
+            @{
+                List<Rule> pinned = Config.Rules.Where(rule => rule.Enabled && !string.IsNullOrWhiteSpace(rule.LocationPin) && rule.Action == RuleAction.Map).ToList();
+            }
+            @if (pinned.Count == 0)
+            {
+                <MudText Class="qh-muted">None yet. Pin a meeting on the <MudLink Href="mapping">mapping board</MudLink> or in a rule.</MudText>
+            }
+            @foreach (Rule rule in pinned)
+            {
+                <div class="qh-pinned-row">
+                    <MudIcon Icon="@Ui.LocationIcon(rule.LocationPin)" Size="Size.Small" />
+                    <span>@rule.Name</span>
+                    <span class="qh-muted">→ @rule.LocationPin</span>
+                </div>
+            }
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12" md="8">
+        <MudPaper Class="qh-panel" Elevation="0">
+            <div class="qh-panel-head">
+                <div>
+                    <MudText Typo="Typo.h6">Schedule</MudText>
+                    <MudText Typo="Typo.body2" Class="qh-muted">Recurring days at a location. The first rule that fits a day wins.</MudText>
+                </div>
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="AddScheduleRule">Add rule</MudButton>
+            </div>
+            @if (Config.Locations.Schedule.Count == 0)
+            {
+                <MudText Class="qh-muted">No schedule: every day uses the default unless you change it.</MudText>
+            }
+            @foreach (LocationScheduleRule rule in Config.Locations.Schedule)
+            {
+                int index = Config.Locations.Schedule.IndexOf(rule);
+                <div class="@($"qh-schedule-rule {(rule.Enabled ? "" : "qh-row-disabled")}")">
+                    <div class="qh-schedule-top">
+                        <MudSwitch T="bool" Value="rule.Enabled" ValueChanged="value => Update(_ => rule.Enabled = value)" Color="Color.Primary" Size="Size.Small" />
+                        <div class="qh-weekdays">
+                            @foreach (DayOfWeek day in Week)
+                            {
+                                <button type="button" class="@($"qh-weekday {(rule.Days.Contains(day) ? "qh-weekday-on" : "")}")" @onclick="() => ToggleDay(rule, day)">@day.ToString()[..2]</button>
+                            }
+                        </div>
+                        <div class="qh-schedule-location">
+                            <LocationSelect Value="@rule.Location" ValueChanged="value => Update(_ => rule.Location = value ?? rule.Location)" Label="At" />
+                        </div>
+                        <MudSpacer />
+                        <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Size="Size.Small" Disabled="index == 0" OnClick="() => Move(rule, -1)" aria-label="Move up" />
+                        <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward" Size="Size.Small" Disabled="index == Config.Locations.Schedule.Count - 1" OnClick="() => Move(rule, 1)" aria-label="Move down" />
+                        <MudIconButton Icon="@Icons.Material.Outlined.Delete" Size="Size.Small" OnClick="() => Update(config => config.Locations.Schedule.Remove(rule))" aria-label="Delete" />
+                    </div>
+                    <div class="qh-schedule-bottom">
+                        <MudSelect T="ScheduleRecurrence" Value="rule.Recurrence" ValueChanged="value => Update(_ => rule.Recurrence = value)" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Label="Repeats" Class="qh-schedule-field">
+                            <MudSelectItem T="ScheduleRecurrence" Value="ScheduleRecurrence.Weekly">Every week</MudSelectItem>
+                            <MudSelectItem T="ScheduleRecurrence" Value="ScheduleRecurrence.EveryNWeeks">Every few weeks</MudSelectItem>
+                            <MudSelectItem T="ScheduleRecurrence" Value="ScheduleRecurrence.MonthlyNthWeekday">Once a month</MudSelectItem>
+                        </MudSelect>
+                        @if (rule.Recurrence == ScheduleRecurrence.EveryNWeeks)
+                        {
+                            <MudNumericField T="int" Value="rule.IntervalWeeks" ValueChanged="value => Update(_ => rule.IntervalWeeks = Math.Max(1, value))" Label="Every … weeks" Min="1" Max="12"
+                                             Variant="Variant.Outlined" Margin="Margin.Dense" Class="qh-schedule-field" />
+                            <MudDatePicker Date="@ToDate(rule.AnchorDate)" DateChanged="value => Update(_ => rule.AnchorDate = FromDate(value))" Label="Starting the week of"
+                                           Variant="Variant.Outlined" Margin="Margin.Dense" Class="qh-schedule-field" DateFormat="d MMM yyyy" />
+                        }
+                        @if (rule.Recurrence == ScheduleRecurrence.MonthlyNthWeekday)
+                        {
+                            <MudSelect T="int" Value="rule.WeekOfMonth" ValueChanged="value => Update(_ => rule.WeekOfMonth = value)" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Label="Which one" Class="qh-schedule-field">
+                                <MudSelectItem T="int" Value="1">First</MudSelectItem>
+                                <MudSelectItem T="int" Value="2">Second</MudSelectItem>
+                                <MudSelectItem T="int" Value="3">Third</MudSelectItem>
+                                <MudSelectItem T="int" Value="4">Fourth</MudSelectItem>
+                                <MudSelectItem T="int" Value="-1">Last</MudSelectItem>
+                            </MudSelect>
+                        }
+                        <MudDatePicker Date="@ToDate(rule.From)" DateChanged="value => Update(_ => rule.From = FromDate(value))" Label="From" Clearable="true"
+                                       Variant="Variant.Outlined" Margin="Margin.Dense" Class="qh-schedule-field" DateFormat="d MMM yyyy" />
+                        <MudDatePicker Date="@ToDate(rule.To)" DateChanged="value => Update(_ => rule.To = FromDate(value))" Label="Until" Clearable="true"
+                                       Variant="Variant.Outlined" Margin="Margin.Dense" Class="qh-schedule-field" DateFormat="d MMM yyyy" />
+                        <MudTextField T="string" Value="rule.Note" ValueChanged="value => Update(_ => rule.Note = value)" Label="Note" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                      DebounceInterval="500" Class="qh-schedule-note" />
+                    </div>
+                    <div class="qh-muted qh-small">@LocationResolver.Describe(rule)</div>
+                </div>
+            }
+        </MudPaper>
+
+        @if (Sheet is not null)
+        {
+            <MudPaper Class="qh-panel mt-3" Elevation="0">
+                <MudText Typo="Typo.h6" Class="mb-2">@Sheet.Period.Name</MudText>
+                <div class="qh-location-strip">
+                    @foreach (DaySummary day in Sheet.Days)
+                    {
+                        <button type="button" class="@($"qh-location-day qh-origin-{day.Location.Origin.ToString().ToLowerInvariant()} {(day.Kind == DayKind.WorkDay ? "" : "qh-location-off")}")"
+                                title="@($"{Ui.LongDay(day.Date)}: {day.Location.Name} ({Ui.OriginLabel(day.Location.Origin)})")" @onclick="@(() => Navigation.NavigateTo($"day/{Ui.DateKey(day.Date)}"))">
+                            <span class="qh-location-date">@day.Date.ToString("ddd d", CultureInfo.InvariantCulture)</span>
+                            <MudIcon Icon="@Ui.LocationIcon(day.Location.Name)" Size="Size.Small" />
+                            <span class="qh-location-name">@day.Location.Name</span>
+                        </button>
+                    }
+                </div>
+                <div class="qh-legend mt-2">
+                    <span><i class="qh-origin-default"></i>default</span>
+                    <span><i class="qh-origin-schedule"></i>schedule</span>
+                    <span><i class="qh-origin-dayoverride"></i>set for the day</span>
+                </div>
+
+                <MudText Typo="Typo.subtitle1" Class="mt-4 mb-1">Days set by hand</MudText>
+                @{
+                    List<DateOnly> overridden = Sheet.Days.Where(day => day.Location.Origin == LocationOrigin.DayOverride).Select(day => day.Date).ToList();
+                }
+                @foreach (DateOnly date in overridden)
+                {
+                    <div class="qh-pinned-row">
+                        <span>@Ui.LongDay(date)</span>
+                        <span class="qh-muted">→ @Workspace.Journal.FindDay(date)?.Location</span>
+                        <MudIconButton Icon="@Icons.Material.Outlined.Close" Size="Size.Small" OnClick="() => ClearDay(date)" aria-label="Clear" />
+                    </div>
+                }
+                <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mt-2">
+                    <MudDatePicker @bind-Date="_overrideDate" Label="Day" Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="ddd d MMM yyyy" />
+                    <LocationSelect @bind-Value="_overrideLocation" Label="At" />
+                    <MudButton Variant="Variant.Outlined" Disabled="_overrideDate is null || _overrideLocation is null" OnClick="SetDay">Set</MudButton>
+                </MudStack>
+            </MudPaper>
+        }
+    </MudItem>
+</MudGrid>
+
+@code {
+    private static readonly DayOfWeek[] Week = [DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday];
+
+    private string? _newLocation;
+    private DateTime? _overrideDate;
+    private string? _overrideLocation;
+
+    private void Update(Action<WorkspaceConfig> change) => Workspace.UpdateConfig(change);
+
+    private void ToggleDay(LocationScheduleRule rule, DayOfWeek day) => Update(_ =>
+    {
+        if (!rule.Days.Remove(day))
+        {
+            rule.Days.Add(day);
+        }
+    });
+
+    private void Move(LocationScheduleRule rule, int direction) => Update(config =>
+    {
+        List<LocationScheduleRule> schedule = config.Locations.Schedule;
+        int index = schedule.IndexOf(rule);
+        int target = index + direction;
+        if (index >= 0 && target >= 0 && target < schedule.Count)
+        {
+            (schedule[index], schedule[target]) = (schedule[target], schedule[index]);
+        }
+    });
+
+    private void AddScheduleRule() => Update(config => config.Locations.Schedule.Add(new LocationScheduleRule
+    {
+        Location = config.Locations.Names.FirstOrDefault(name => name != config.Locations.Default) ?? config.Locations.Default,
+        Days = [DayOfWeek.Friday],
+    }));
+
+    private void AddLocation()
+    {
+        string name = _newLocation!.Trim();
+        Update(config =>
+        {
+            if (!config.Locations.Names.Contains(name, StringComparer.OrdinalIgnoreCase))
+            {
+                config.Locations.Names.Add(name);
+            }
+        });
+        _newLocation = null;
+    }
+
+    private void RemoveLocation(string location)
+    {
+        bool used = Config.Locations.Schedule.Any(rule => rule.Location == location) || Config.Rules.Any(rule => rule.LocationPin == location);
+        if (used)
+        {
+            Snackbar.Add($"{location} is used by a schedule rule or pin; change those first.", Severity.Warning);
+            return;
+        }
+
+        Update(config => config.Locations.Names.Remove(location));
+    }
+
+    private void SetDay()
+    {
+        if (_overrideDate is not { } date || _overrideLocation is null)
+        {
+            return;
+        }
+
+        DateOnly day = DateOnly.FromDateTime(date);
+        Workspace.UpdateJournal(journal =>
+        {
+            string key = Journal.DayKey(day);
+            DayOverride existing = journal.Days.GetValueOrDefault(key) ?? new DayOverride();
+            existing.Location = _overrideLocation;
+            journal.Days[key] = existing;
+        });
+        Snackbar.Add($"{Ui.LongDay(day)} is now at {_overrideLocation}.", Severity.Success);
+    }
+
+    private void ClearDay(DateOnly date) => Workspace.UpdateJournal(journal =>
+    {
+        if (journal.Days.TryGetValue(Journal.DayKey(date), out DayOverride? day))
+        {
+            day.Location = null;
+        }
+    });
+
+    private static DateTime? ToDate(DateOnly? date) => date?.ToDateTime(TimeOnly.MinValue);
+
+    private static DateOnly? FromDate(DateTime? date) => date is { } value ? DateOnly.FromDateTime(value) : null;
+}

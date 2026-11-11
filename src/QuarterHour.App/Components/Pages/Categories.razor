@@ -1,0 +1,184 @@
+@page "/categories"
+@inherits PeriodPageBase
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+
+<PageTitle>Categories · QuarterHour</PageTitle>
+
+<div class="qh-page-head">
+    <div>
+        <MudText Typo="Typo.h4" Class="qh-title">Categories</MudText>
+        <MudText Typo="Typo.body2" Class="qh-muted">The Timesheet system's projects and the categories under them. Billable categories count towards the @Config.Targets.BillableTargetHours.ToString("0.##", CultureInfo.InvariantCulture) h target.</MudText>
+    </div>
+    <MudStack Row="true" Spacing="2">
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Outlined.AutoFixHigh" OnClick="LearnAsync">Learn from a previous timesheet</MudButton>
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Outlined.PlaylistAdd" OnClick="() => _bulk = !_bulk">Paste a list</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="() => EditAsync(null)">Add category</MudButton>
+    </MudStack>
+</div>
+
+@if (Config.Categories.Any(category => category.Group == DefaultWorkspace.ClientProject))
+{
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true" Class="mb-3">
+        “@DefaultWorkspace.ClientProject” is a placeholder for your client project. Rename it to the project's name in the Timesheet system,
+        or use <b>Learn from a previous timesheet</b> to pick it up (and more) from last month's export.
+    </MudAlert>
+}
+
+@if (_bulk)
+{
+    <MudPaper Class="qh-panel mb-3" Elevation="0">
+        <MudText Typo="Typo.subtitle1">Paste one category per line as <code>Project &gt; Category</code>, optionally followed by <code>; billable</code> and <code>; code</code>.</MudText>
+        <MudTextField T="string" @bind-Value="_bulkText" Lines="6" Variant="Variant.Outlined" Class="mt-2"
+                      Placeholder="@("R - Acme - Portal > Meetings; billable\nTraining > Coffee & Code Attendance")" />
+        <MudStack Row="true" Justify="Justify.FlexEnd" Class="mt-2">
+            <MudButton OnClick="() => _bulk = false">Cancel</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ImportList">Add them</MudButton>
+        </MudStack>
+    </MudPaper>
+}
+
+<MudPaper Class="qh-panel" Elevation="0">
+    <div class="qh-panel-head">
+        <MudTextField T="string" @bind-Value="_search" Placeholder="Search" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" Clearable="true"
+                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Class="qh-search" />
+        <MudSwitch T="bool" @bind-Value="_showArchived" Size="Size.Small" Color="Color.Primary" Label="Show archived" />
+    </div>
+    <table class="qh-table qh-categories">
+        <thead>
+            <tr><th></th><th>Project</th><th>Category</th><th>Code</th><th>Billable</th><th>Leave</th><th class="qh-num">Rules</th><th class="qh-num">This period</th><th></th></tr>
+        </thead>
+        <tbody>
+            @foreach (Category category in Visible)
+            {
+                int rules = Config.Rules.Count(rule => rule.CategoryId == category.Id);
+                int minutes = Sheet?.Totals.ByCategory.FirstOrDefault(total => total.CategoryId == category.Id)?.Minutes ?? 0;
+                <tr class="@(category.Archived ? "qh-row-disabled" : "")">
+                    <td><span class="qh-cat-dot qh-cat-dot-lg" style="background:@Ui.ColorOf(category)"></span></td>
+                    <td>@category.Group</td>
+                    <td><b>@category.Name</b></td>
+                    <td class="qh-muted">@category.Code</td>
+                    <td><MudSwitch T="bool" Value="category.Billable" ValueChanged="value => Set(category, live => live.Billable = value)" Color="Color.Success" Size="Size.Small" /></td>
+                    <td><MudSwitch T="bool" Value="category.IsLeave" ValueChanged="value => Set(category, live => live.IsLeave = value)" Color="Color.Info" Size="Size.Small" /></td>
+                    <td class="qh-num">@rules</td>
+                    <td class="qh-num">@(minutes > 0 ? Ui.Hours(minutes) : "")</td>
+                    <td class="qh-actions qh-nowrap">
+                        @if (Config.Targets.TopUpCategoryId == category.Id)
+                        {
+                            <MudTooltip Text="Days are topped up with this category"><MudIcon Icon="@Icons.Material.Outlined.VerticalAlignTop" Size="Size.Small" Class="mr-1" /></MudTooltip>
+                        }
+                        <MudIconButton Icon="@Icons.Material.Outlined.Edit" Size="Size.Small" OnClick="() => EditAsync(category)" aria-label="Edit" />
+                        <MudIconButton Icon="@Icons.Material.Outlined.Delete" Size="Size.Small" OnClick="() => DeleteAsync(category)" aria-label="Delete" />
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</MudPaper>
+
+@code {
+    private string? _search;
+    private bool _showArchived;
+    private bool _bulk;
+    private string? _bulkText;
+
+    private IEnumerable<Category> Visible => Config.Categories
+        .Where(category => _showArchived || !category.Archived)
+        .Where(category => string.IsNullOrWhiteSpace(_search) || category.DisplayName.Contains(_search, StringComparison.OrdinalIgnoreCase))
+        .OrderBy(category => category.Group)
+        .ThenBy(category => category.Name);
+
+    private void Set(Category category, Action<Category> change) => Workspace.UpdateConfig(config =>
+    {
+        if (config.FindCategory(category.Id) is { } live)
+        {
+            change(live);
+        }
+    });
+
+    private async Task EditAsync(Category? category)
+    {
+        DialogParameters<CategoryDialog> parameters = new() { { dialog => dialog.Category, category is null ? new Category() : Ui.Clone(category) } };
+        IDialogReference dialog = await Dialogs.ShowAsync<CategoryDialog>(category is null ? "New category" : "Edit category", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true });
+        DialogResult? result = await dialog.Result;
+        if (result is not { Canceled: false, Data: Category saved })
+        {
+            return;
+        }
+
+        Workspace.UpdateConfig(config =>
+        {
+            int index = config.Categories.FindIndex(candidate => candidate.Id == saved.Id);
+            if (index >= 0)
+            {
+                config.Categories[index] = saved;
+            }
+            else
+            {
+                config.Categories.Add(saved);
+            }
+        });
+    }
+
+    private async Task DeleteAsync(Category category)
+    {
+        int rules = Config.Rules.Count(rule => rule.CategoryId == category.Id);
+        string message = rules > 0
+            ? $"{Ui.Plural(rules, "rule")} and mappings point at “{category.DisplayName}”. Archive it instead to keep them, or delete it and those rules."
+            : $"Delete “{category.DisplayName}”?";
+        bool? choice = await Dialogs.ShowMessageBoxAsync("Delete category?", message, yesText: "Delete", noText: rules > 0 ? "Archive" : null, cancelText: "Cancel");
+        if (choice == true)
+        {
+            Workspace.UpdateConfig(config =>
+            {
+                config.Categories.RemoveAll(candidate => candidate.Id == category.Id);
+                config.Rules.RemoveAll(rule => rule.CategoryId == category.Id && rule.Action == RuleAction.Map);
+            });
+        }
+        else if (choice == false)
+        {
+            Set(category, live => live.Archived = true);
+        }
+    }
+
+    private async Task LearnAsync()
+    {
+        await Dialogs.ShowAsync<LearnDialog>("Learn from a previous timesheet", new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseButton = true });
+    }
+
+    private void ImportList()
+    {
+        List<Category> added = [];
+        foreach (string line in (_bulkText ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            string[] parts = line.Split(';', StringSplitOptions.TrimEntries);
+            string[] path = parts[0].Split(['>', '›'], 2, StringSplitOptions.TrimEntries);
+            string project = path.Length == 2 ? path[0] : "";
+            string name = path.Length == 2 ? path[1] : path[0];
+            if (name.Length == 0)
+            {
+                continue;
+            }
+
+            bool billable = parts.Skip(1).Any(part => part.Equals("billable", StringComparison.OrdinalIgnoreCase));
+            string? code = parts.Skip(1).FirstOrDefault(part => !part.Equals("billable", StringComparison.OrdinalIgnoreCase) && part.Length > 0);
+            added.Add(new Category { Group = project, Name = name, Billable = billable, Code = code });
+        }
+
+        Workspace.UpdateConfig(config =>
+        {
+            foreach (Category category in added)
+            {
+                if (!config.Categories.Any(existing => string.Equals(existing.DisplayName, category.DisplayName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    category.Color = Ui.NextColor(config.Categories);
+                    config.Categories.Add(category);
+                }
+            }
+        });
+        Snackbar.Add($"Added {Ui.Plural(added.Count, "category", "categories")}.", Severity.Success);
+        _bulk = false;
+        _bulkText = null;
+    }
+}

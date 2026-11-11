@@ -1,0 +1,57 @@
+@implements IDisposable
+@inject WorkspaceService Workspace
+@inject UiState UiState
+
+<MudNavMenu Class="qh-nav" Bordered="false">
+    <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Outlined.CalendarMonth">Overview</MudNavLink>
+    <MudNavLink Href="day" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Outlined.ViewDay">Day review</MudNavLink>
+    <MudNavLink Href="mapping" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Outlined.AccountTree">
+        Mapping
+        @if (_unmapped > 0)
+        {
+            <MudChip T="string" Size="Size.Small" Color="Color.Warning" Class="qh-nav-badge">@_unmapped</MudChip>
+        }
+    </MudNavLink>
+    <MudNavLink Href="rules" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Outlined.Rule">Rules</MudNavLink>
+    <MudNavLink Href="categories" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Outlined.Category">Categories</MudNavLink>
+    <MudNavLink Href="locations" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Outlined.Place">Locations</MudNavLink>
+    <MudNavLink Href="export" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Outlined.FileDownload">Export</MudNavLink>
+    <MudDivider Class="my-2" />
+    <MudNavLink Href="settings" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Outlined.Settings">Settings</MudNavLink>
+</MudNavMenu>
+
+@code {
+    private int _unmapped;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Workspace.Changed += OnChanged;
+        UiState.PeriodChanged += OnChanged;
+        await CountAsync();
+    }
+
+    private void OnChanged() => InvokeAsync(async () =>
+    {
+        await CountAsync();
+        StateHasChanged();
+    });
+
+    private async Task CountAsync()
+    {
+        try
+        {
+            PeriodTimesheet sheet = await Workspace.GetTimesheetAsync(UiState.Period);
+            _unmapped = sheet.Activities.Where(result => result.Status == ActivityStatus.Unmapped).Select(result => result.Activity.GroupKey).Distinct().Count();
+        }
+        catch (Exception)
+        {
+            _unmapped = 0;
+        }
+    }
+
+    public void Dispose()
+    {
+        Workspace.Changed -= OnChanged;
+        UiState.PeriodChanged -= OnChanged;
+    }
+}

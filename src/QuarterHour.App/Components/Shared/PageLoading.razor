@@ -1,0 +1,15 @@
+@if (Error is not null)
+{
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">Couldn't build the timesheet: @Error</MudAlert>
+}
+else
+{
+    <div class="qh-loading">
+        <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Medium" />
+        <MudText Class="qh-muted mt-3">Reading your calendar and agent sessions…</MudText>
+    </div>
+}
+
+@code {
+    [Parameter] public string? Error { get; set; }
+}
