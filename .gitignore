@@ -1,0 +1,25 @@
+## Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+dist/
+TestResults/
+
+## IDEs
+.vs/
+.idea/
+*.user
+*.suo
+*.DotSettings.user
+.vscode/*
+!.vscode/extensions.json
+
+## Local runtime data (the app keeps its own data under %LOCALAPPDATA%\QuarterHour by default)
+.data/
+*.log
+
+## Playwright / tooling scratch
+.playwright-mcp/
+.playwright-cli/
