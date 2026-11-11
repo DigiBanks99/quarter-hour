@@ -65,6 +65,7 @@
 
     private async Task SyncAsync()
     {
+        using System.Diagnostics.Activity? ui = Telemetry.StartUiAction("sync");
         _syncing = true;
         try
         {
@@ -79,6 +80,7 @@
                 }
                 catch (Exception exception)
                 {
+                    ui.Fail(exception);
                     Snackbar.Add($"Calendar: {exception.Message}", Severity.Warning);
                 }
             }
