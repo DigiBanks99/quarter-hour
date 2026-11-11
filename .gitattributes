@@ -1,0 +1,3 @@
+# iCalendar files use CRLF line endings (RFC 5545). Keeping them CRLF on every OS means the regenerated sample
+# (samples/make-sample-calendar.py writes CRLF) compares equal to the committed one in CI.
+*.ics text eol=crlf
