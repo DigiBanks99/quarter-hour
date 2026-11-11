@@ -9,7 +9,7 @@ Ticket Number, Sentiment, Worked From — every cell as text, in a `Timesheet` t
 Needs the .NET 10 SDK.
 
 ```powershell
-dotnet run --project src/QuarterHour.App        # http://localhost:5290
+aspire start
 ```
 
 To take it to a machine without the SDK, publish a self-contained build and copy the folder:

@@ -1,0 +1,19 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/QuarterHour.App/QuarterHour.App.csproj" />
+    <Project Path="src/QuarterHour.AppHost/QuarterHour.AppHost.csproj" />
+    <Project Path="src/QuarterHour.Core/QuarterHour.Core.csproj" />
+    <Project Path="src/QuarterHour.Infrastructure/QuarterHour.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/QuarterHour.Core.Tests/QuarterHour.Core.Tests.csproj" />
+    <Project Path="tests/QuarterHour.IntegrationTests/QuarterHour.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/solution items/">
+    <File Path=".editorconfig" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+    <File Path="global.json" />
+    <File Path="README.md" />
+  </Folder>
+</Solution>
