@@ -55,7 +55,10 @@ public sealed class BrowserTests(QuarterHourApp app)
         await page.GotoAsync("/settings");
         await page.WaitForInteractiveAsync();
         await page.ShowPeriodAsync(2026, 11);
-        await page.Locator("input[type=file][accept^='.ics']").SetInputFilesAsync(Pages.Sample("november-2026.ics"));
+        ILocator upload = page.Locator("input[type=file][accept^='.ics']");
+        // Blazor tags the input once its circuit is wired up; files set before that are silently dropped.
+        await upload.EvaluateAsync("input => new Promise(resolve => { const check = () => input._blazorInputFileNextFileId !== undefined ? resolve() : setTimeout(check, 50); check(); })");
+        await upload.SetInputFilesAsync(Pages.Sample("november-2026.ics"));
         ILocator imported = page.Locator(".mud-snackbar").Filter(new LocatorFilterOptions { HasText = "Imported" });
         await Assertions.Expect(imported).ToBeVisibleAsync();
         string importMessage = await imported.InnerTextAsync();

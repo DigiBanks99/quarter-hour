@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using Microsoft.Playwright;
 
 namespace QuarterHour.EndToEndTests;
@@ -37,10 +38,10 @@ internal static class Pages
         throw new InvalidOperationException($"The period switcher never reached {target}.");
     }
 
-    /// <summary>Follows a link in the navigation drawer, keeping the same circuit (and so the same period).</summary>
+    /// <summary>Follows a link in the navigation drawer, keeping the same circuit (and so the same period). A link may carry a count badge, as Mapping does.</summary>
     public static async Task NavigateAsync(this IPage page, string linkText)
     {
-        await page.Locator(".mud-navmenu").GetByRole(AriaRole.Link, new LocatorGetByRoleOptions { Name = linkText, Exact = true }).ClickAsync();
+        await page.Locator(".mud-navmenu").GetByRole(AriaRole.Link, new LocatorGetByRoleOptions { NameRegex = new Regex($@"^{Regex.Escape(linkText)}(\s+\d+)?$") }).ClickAsync();
     }
 
     /// <summary>The repository's samples folder, found by walking up from the test binaries to the solution.</summary>
