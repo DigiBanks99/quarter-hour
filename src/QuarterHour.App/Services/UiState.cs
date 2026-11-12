@@ -2,7 +2,7 @@ using QuarterHour.Core.Time;
 
 namespace QuarterHour.App.Services;
 
-/// <summary>Per-browser-tab state: which period is being looked at, and light or dark mode.</summary>
+/// <summary>Per-browser-tab state: which period is being looked at.</summary>
 public sealed class UiState
 {
     private readonly WorkspaceService _workspace;
@@ -14,8 +14,6 @@ public sealed class UiState
     }
 
     public event Action? PeriodChanged;
-
-    public bool DarkMode { get; set; }
 
     public TimesheetPeriod Period
     {

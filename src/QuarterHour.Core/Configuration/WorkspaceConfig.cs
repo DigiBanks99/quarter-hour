@@ -128,6 +128,9 @@ public sealed class GeneralSettings
 
     public OverlapPolicy OverlapPolicy { get; set; } = OverlapPolicy.HigherPriorityWins;
 
+    /// <summary>Dark (true) or light (false) theme the user chose. Null follows the browser's colour scheme.</summary>
+    public bool? DarkMode { get; set; }
+
     public TimeZoneInfo ResolveTimeZone()
     {
         try

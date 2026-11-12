@@ -4,7 +4,7 @@
 @inject WorkspaceService Workspace
 @inject ISnackbar Snackbar
 
-<MudThemeProvider Theme="Ui.Theme" @bind-IsDarkMode="_dark" />
+<MudThemeProvider @ref="_theme" Theme="Ui.Theme" @bind-IsDarkMode="_dark" />
 <MudPopoverProvider />
 <MudDialogProvider CloseOnEscapeKey="true" />
 <MudSnackbarProvider />
@@ -47,12 +47,41 @@
 @code {
     private bool _drawer = true;
     private bool _dark;
+    private MudThemeProvider? _theme;
     private bool _syncing;
 
     protected override void OnInitialized()
     {
-        _dark = UiState.DarkMode;
+        _dark = Workspace.Config.General.DarkMode ?? false;
         UiState.PeriodChanged += OnPeriodChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _theme is null)
+        {
+            return;
+        }
+
+        // Until the user picks a theme themselves, follow the browser's light/dark preference.
+        if (Workspace.Config.General.DarkMode is null)
+        {
+            _dark = await _theme.GetSystemDarkModeAsync();
+            StateHasChanged();
+        }
+
+        await _theme.WatchSystemDarkModeAsync(OnSystemDarkModeChanged);
+    }
+
+    private async Task OnSystemDarkModeChanged(bool dark)
+    {
+        if (Workspace.Config.General.DarkMode is not null)
+        {
+            return;
+        }
+
+        _dark = dark;
+        await InvokeAsync(StateHasChanged);
     }
 
     private void OnPeriodChanged() => InvokeAsync(StateHasChanged);
@@ -60,7 +89,7 @@
     private void ToggleDark()
     {
         _dark = !_dark;
-        UiState.DarkMode = _dark;
+        Workspace.UpdateConfig(config => config.General.DarkMode = _dark);
     }
 
     private async Task SyncAsync()
