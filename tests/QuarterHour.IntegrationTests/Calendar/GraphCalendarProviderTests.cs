@@ -88,7 +88,7 @@ public sealed class GraphCalendarProviderTests : IDisposable
         ItShouldExplainWhatPermissionIsNeeded();
 
         void ItShouldExplainWhatPermissionIsNeeded() =>
-            exception.ShouldBeOfType<GraphSignInRequiredException>().Message.ShouldContain("Calendars.ReadBasic");
+            exception.ShouldBeOfType<GraphSignInRequiredException>().Message.ShouldContain("Calendars.Read");
     }
 
     public void Dispose() => _graph.Dispose();

@@ -53,7 +53,7 @@ public sealed class GraphAuthService
     public async Task<string> GetAccessTokenAsync(GraphSettings settings, bool interactive, Func<string, Task>? deviceCode, CancellationToken cancellationToken)
     {
         IPublicClientApplication application = await ApplicationAsync(settings);
-        string[] scopes = Scopes(settings);
+        string[] scopes = Scopes();
         IAccount? account = (await application.GetAccountsAsync()).FirstOrDefault();
         if (account is not null)
         {
@@ -164,11 +164,7 @@ public sealed class GraphAuthService
         }
     }
 
-    private static string[] Scopes(GraphSettings settings)
-    {
-        string scope = string.IsNullOrWhiteSpace(settings.Scope) ? "Calendars.ReadBasic" : settings.Scope.Trim();
-        return [scope.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? scope : GraphResource + scope];
-    }
+    private static string[] Scopes() => [GraphResource + "Calendars.Read"];
 
     private async Task<IPublicClientApplication> ApplicationAsync(GraphSettings settings)
     {

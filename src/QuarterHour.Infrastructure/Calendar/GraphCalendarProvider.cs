@@ -82,7 +82,7 @@ public sealed class GraphCalendarProvider : ICalendarProvider
                 string detail = await response.Content.ReadAsStringAsync(cancellationToken);
                 throw new GraphSignInRequiredException(
                     $"Microsoft Graph refused to read the calendar ({(int)response.StatusCode}). Check the app registration has the delegated " +
-                    $"Calendars.ReadBasic (or Calendars.Read) permission with consent, then sign in again. {Shorten(detail)}");
+                    $"Calendars.Read permission with consent, then sign in again. {Shorten(detail)}");
             }
 
             if (!response.IsSuccessStatusCode)
