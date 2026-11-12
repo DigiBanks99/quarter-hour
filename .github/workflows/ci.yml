@@ -86,7 +86,7 @@ jobs:
         run: dotnet build tests/QuarterHour.EndToEndTests ${{ env.BUILD_ARGS }}
 
       - name: Install Chromium for Playwright
-        run: pwsh tests/QuarterHour.EndToEndTests/bin/Release/net10.0/playwright.ps1 install --with-deps chromium
+        run: pwsh tests/QuarterHour.EndToEndTests/bin/Release/net11.0/playwright.ps1 install --with-deps chromium
 
       - name: Trust the HTTPS development certificate
         # Aspire's health check calls the app over HTTPS. On Linux, .NET trusts the dev cert through SSL_CERT_DIR.
