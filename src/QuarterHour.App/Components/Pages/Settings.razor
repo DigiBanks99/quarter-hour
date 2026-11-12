@@ -45,12 +45,6 @@
                                               Variant="Variant.Outlined" Margin="Margin.Dense" DebounceInterval="600" HelperText="organizations, or the tenant id / domain" />
                             </MudItem>
                             <MudItem xs="12" md="6">
-                                <MudSelect T="string" Value="graph.Scope" ValueChanged=@(value => Save(_ => graph.Scope = value ?? "Calendars.ReadBasic")) Label="Permission" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
-                                    <MudSelectItem T="string" Value="@("Calendars.ReadBasic")">Calendars.ReadBasic (no bodies or attachments)</MudSelectItem>
-                                    <MudSelectItem T="string" Value="@("Calendars.Read")">Calendars.Read</MudSelectItem>
-                                </MudSelect>
-                            </MudItem>
-                            <MudItem xs="12" md="6">
                                 <MudSelect T="GraphSignInMode" Value="graph.SignInMode" ValueChanged="value => Save(_ => graph.SignInMode = value)" Label="Sign in with" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
                                     <MudSelectItem T="GraphSignInMode" Value="GraphSignInMode.InteractiveBrowser">The browser on this PC</MudSelectItem>
                                     <MudSelectItem T="GraphSignInMode" Value="GraphSignInMode.DeviceCode">A device code (any browser)</MudSelectItem>
@@ -81,7 +75,7 @@
                                 <ol class="qh-steps">
                                     <li>In the Azure portal, open <b>Microsoft Entra ID → App registrations → New registration</b>. Name it “QuarterHour”, accounts in this organisation only.</li>
                                     <li>Under <b>Authentication</b>, add the platform <b>Mobile and desktop applications</b> with the redirect URI <code>http://localhost</code>, and set <b>Allow public client flows</b> to <b>Yes</b> (needed for device codes).</li>
-                                    <li>Under <b>API permissions</b>, add <b>Microsoft Graph → Delegated → Calendars.ReadBasic</b>. If your organisation needs admin consent, ask IT to grant it.</li>
+                                    <li>Under <b>API permissions</b>, add <b>Microsoft Graph → Delegated → Calendars.Read</b>. If your organisation needs admin consent, ask IT to grant it.</li>
                                     <li>Copy the <b>Application (client) ID</b> into the box above and sign in.</li>
                                 </ol>
                                 <MudText Typo="Typo.body2" Class="qh-muted">No access yet? In Outlook use <b>File → Save Calendar</b> (or publish it as ICS) and import the file below.</MudText>

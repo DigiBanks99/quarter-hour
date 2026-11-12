@@ -30,7 +30,7 @@ Data lives in `%LOCALAPPDATA%\QuarterHour` (`config.json`, `journal.json`, cache
    and turns on the daily top-up with the category your "what I worked on" rows used (e.g. Analysis).
 2. **Settings → Calendar**: choose a source.
    - *Microsoft Graph*: register an app in Entra ID (Mobile and desktop platform, redirect URI `http://localhost`,
-     allow public client flows, delegated **Calendars.ReadBasic**), paste its client ID, sign in. Full steps are in the app.
+     allow public client flows, delegated **Calendars.Read**), paste its client ID, sign in. Full steps are in the app.
    - *Classic Outlook on this PC*: reads Outlook through COM — no registration needed (not the new Outlook).
    - *.ics import*: Outlook → File → Save Calendar, then import the file for the period.
 3. **Settings → Agent sessions**: Claude Code, Copilot CLI, Codex, OpenCode (SQLite and older JSON) and Pi are

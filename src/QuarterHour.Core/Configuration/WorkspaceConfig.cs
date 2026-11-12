@@ -298,9 +298,6 @@ public sealed class GraphSettings
     public string ClientId { get; set; } = "";
 
     public GraphSignInMode SignInMode { get; set; } = GraphSignInMode.InteractiveBrowser;
-
-    /// <summary>Calendars.ReadBasic is enough (no bodies or attachments) and is the easiest to get consented.</summary>
-    public string Scope { get; set; } = "Calendars.ReadBasic";
 }
 
 public enum GraphSignInMode
