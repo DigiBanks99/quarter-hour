@@ -50,6 +50,10 @@ public sealed record Activity
     public string? Agent { get; init; }
     public string? SessionId { get; init; }
     public string? SessionTitle { get; init; }
+
+    /// <summary>The project's own name (repository or folder), before any friendly name.</summary>
+    public string? ProjectName { get; init; }
+
     public string? ProjectPath { get; init; }
     public string? Repository { get; init; }
     public string? Branch { get; init; }

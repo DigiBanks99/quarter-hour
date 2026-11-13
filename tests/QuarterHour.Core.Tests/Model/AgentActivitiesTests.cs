@@ -1,4 +1,5 @@
 using QuarterHour.Core.Model;
+using QuarterHour.Core.Rules;
 
 namespace QuarterHour.Core.Tests.Model;
 
@@ -63,6 +64,30 @@ public sealed class AgentActivitiesTests
             copilotGroup.ShouldBe("agent:portal");
             claudeGroup.ShouldBe(copilotGroup);
         }
+    }
+
+    [Test]
+    public void TheProjectHasAFriendlyName()
+    {
+        AgentSession session = Session([0]) with { ProjectPath = @"C:\source\portal-api", Title = null };
+        Dictionary<string, string> names = new(StringComparer.OrdinalIgnoreCase) { ["portal-api"] = "Portal" };
+
+        Activity block = AgentActivities.ToActivities(session, TimeSpan.FromMinutes(15), TimeSpan.Zero, SouthAfrica, names)[0];
+
+        ItShouldShowTheFriendlyName();
+        ItShouldKeepTheGroupKeyOnTheRepositoryName();
+        ItShouldKeepTheRepositoryNameForRules();
+
+        void ItShouldShowTheFriendlyName()
+        {
+            block.GroupLabel.ShouldBe("Portal");
+            block.Title.ShouldBe("Portal");
+            ActivityFields.Get(block, "project").Text.ShouldBe("Portal");
+        }
+
+        void ItShouldKeepTheGroupKeyOnTheRepositoryName() => block.GroupKey.ShouldBe("agent:portal-api");
+
+        void ItShouldKeepTheRepositoryNameForRules() => ActivityFields.Get(block, "repo").Text.ShouldBe("portal-api");
     }
 
     [Test]

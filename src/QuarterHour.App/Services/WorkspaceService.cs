@@ -200,7 +200,8 @@ public sealed class WorkspaceService
 
             TimeSpan idleGap = TimeSpan.FromMinutes(Math.Max(1, config.Agents.IdleGapMinutes));
             TimeSpan padding = TimeSpan.FromMinutes(Math.Max(0, config.Agents.PaddingMinutes));
-            activities.AddRange(agents.Sessions.SelectMany(session => AgentActivities.ToActivities(session, idleGap, padding, timeZone)));
+            IReadOnlyDictionary<string, string> friendlyNames = config.FriendlyProjectNames();
+            activities.AddRange(agents.Sessions.SelectMany(session => AgentActivities.ToActivities(session, idleGap, padding, timeZone, friendlyNames)));
 
             PeriodTimesheet sheet = new TimesheetBuilder().Build(period, config, journal, activities, Today);
             lock (_gate)
