@@ -5,10 +5,13 @@ namespace QuarterHour.Core.Model;
 /// <summary>
 /// Turns an agent session's timestamps into blocks of work. A pause longer than the idle gap starts a new block,
 /// and each block gets a little padding after its last message for reading and reviewing the result.
+/// A project's friendly name, when it has one, becomes the label; the group key stays on the repository name so
+/// mappings made on the board survive a rename.
 /// </summary>
 public static class AgentActivities
 {
-    public static IReadOnlyList<Activity> ToActivities(AgentSession session, TimeSpan idleGap, TimeSpan padding, TimeZoneInfo timeZone)
+    public static IReadOnlyList<Activity> ToActivities(AgentSession session, TimeSpan idleGap, TimeSpan padding, TimeZoneInfo timeZone,
+        IReadOnlyDictionary<string, string>? friendlyNames = null)
     {
         List<DateTime> times = session.Timestamps
             .Select(timestamp => TimeZoneInfo.ConvertTime(timestamp, timeZone).DateTime)
@@ -39,8 +42,10 @@ public static class AgentActivities
 
         blocks.Add((blockStart, last, count));
 
-        string project = ProjectNaming.Label(session.ProjectPath, session.Repository);
-        string groupKey = "agent:" + ProjectNaming.Key(session.ProjectPath, session.Repository);
+        string repositoryName = ProjectNaming.Label(session.ProjectPath, session.Repository);
+        string projectKey = ProjectNaming.Key(session.ProjectPath, session.Repository);
+        string groupKey = "agent:" + projectKey;
+        string project = friendlyNames?.GetValueOrDefault(projectKey) is { Length: > 0 } friendly ? friendly : repositoryName;
         string title = string.IsNullOrWhiteSpace(session.Title) ? project : session.Title.Trim();
         List<Activity> activities = new(blocks.Count);
         for (int index = 0; index < blocks.Count; index++)
@@ -64,6 +69,7 @@ public static class AgentActivities
                 Agent = session.Agent,
                 SessionId = session.SessionId,
                 SessionTitle = session.Title,
+                ProjectName = repositoryName,
                 ProjectPath = session.ProjectPath,
                 Repository = session.Repository,
                 Branch = session.Branch,
@@ -104,6 +110,10 @@ public static class ProjectNaming
     }
 
     public static string Key(string? path, string? repository) => Label(path, repository).ToLowerInvariant();
+
+    /// <summary>The project key behind an agent group key ("agent:portal" is "portal"), or null for other groups.</summary>
+    public static string? KeyOfGroup(string groupKey) =>
+        groupKey.StartsWith("agent:", StringComparison.Ordinal) ? groupKey["agent:".Length..] : null;
 
     /// <summary>"https://github.com/acme/portal.git", "git@github.com:acme/portal.git" and "acme/portal" are all "portal".</summary>
     public static string? RepositoryName(string? repository)

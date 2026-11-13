@@ -20,10 +20,23 @@ public sealed class WorkspaceConfig
     public List<Rule> Rules { get; set; } = [];
     public CalendarSettings Calendar { get; set; } = new();
     public AgentSettings Agents { get; set; } = new();
+
+    /// <summary>Per-project settings for agent work, such as the friendly name timesheets use.</summary>
+    public List<ProjectSettings> Projects { get; set; } = [];
+
     public ExportProfile Export { get; set; } = new();
 
     public Category? FindCategory(string? id) =>
         id is null ? null : Categories.FirstOrDefault(category => category.Id == id);
+
+    public ProjectSettings? FindProject(string? key) =>
+        key is null ? null : Projects.FirstOrDefault(project => string.Equals(project.Key, key, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Project key (repository name, lower case) to friendly name, for the projects that have one.</summary>
+    public IReadOnlyDictionary<string, string> FriendlyProjectNames() =>
+        Projects
+            .Where(project => project.FriendlyName is { Length: > 0 })
+            .ToDictionary(project => project.Key, project => project.FriendlyName!, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Fills in anything an older or hand-edited file left out, so the rest of the code can rely on it.</summary>
     public WorkspaceConfig Normalize()
@@ -73,6 +86,12 @@ public sealed class WorkspaceConfig
         }
 
         Agents.AgentsView ??= new AgentsViewSettings();
+        Projects = (Projects ?? [])
+            .Where(project => project is not null && !string.IsNullOrWhiteSpace(project.Key))
+            .Select(project => project.Normalize())
+            .Where(project => !project.IsEmpty)
+            .DistinctBy(project => project.Key, StringComparer.OrdinalIgnoreCase)
+            .ToList();
         Export ??= new ExportProfile();
         Export.Columns ??= [];
         if (Export.Columns.Count == 0)
@@ -319,6 +338,24 @@ public sealed class AgentSettings
 
     public List<AgentScannerSettings> Scanners { get; set; } = [];
     public AgentsViewSettings AgentsView { get; set; } = new();
+}
+
+/// <summary>Settings for one project of agent work, keyed like its mapping group (the repository name, lower case).</summary>
+public sealed class ProjectSettings
+{
+    public string Key { get; set; } = "";
+
+    /// <summary>The name timesheets use instead of the repository name, such as "Portal" for "portal-api".</summary>
+    public string? FriendlyName { get; set; }
+
+    public bool IsEmpty => FriendlyName is null;
+
+    public ProjectSettings Normalize()
+    {
+        Key = Key.Trim().ToLowerInvariant();
+        FriendlyName = string.IsNullOrWhiteSpace(FriendlyName) ? null : FriendlyName.Trim();
+        return this;
+    }
 }
 
 public enum AgentKind

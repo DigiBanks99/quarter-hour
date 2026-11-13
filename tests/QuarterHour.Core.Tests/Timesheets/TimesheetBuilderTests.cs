@@ -53,6 +53,21 @@ public sealed class TimesheetBuilderTests
     }
 
     [Test]
+    public void TwoRepositoriesShareAFriendlyName()
+    {
+        _config.Rules.Add(TestData.Direct("agent:portal-api", DefaultWorkspace.ClientDevelopment));
+        _config.Rules.Add(TestData.Direct("agent:portal-web", DefaultWorkspace.ClientDevelopment));
+
+        PeriodTimesheet sheet = Build(
+            TestData.AgentBlock("s1", "portal-api", At(Monday, 8), 60, title: "Fix login") with { GroupLabel = "Portal" },
+            TestData.AgentBlock("s2", "portal-web", At(Monday, 10), 60, title: "Restyle login") with { GroupLabel = "Portal" });
+
+        ItShouldDescribeThemUnderOneName();
+
+        void ItShouldDescribeThemUnderOneName() => sheet.Lines.Single().Description.ShouldBe("Portal: Fix login; Restyle login");
+    }
+
+    [Test]
     public void ACoffeeRunIsOnTheCalendar()
     {
         _config.Rules.AddRange(DefaultWorkspace.Create().Rules);
