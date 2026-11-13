@@ -10,6 +10,7 @@ public sealed class BrowserTests(QuarterHourApp app)
     [Test]
     [Arguments("Overview", "Overview · QuarterHour")]
     [Arguments("Mapping", "Mapping · QuarterHour")]
+    [Arguments("Projects", "Projects · QuarterHour")]
     [Arguments("Rules", "Rules · QuarterHour")]
     [Arguments("Categories", "Categories · QuarterHour")]
     [Arguments("Locations", "Locations · QuarterHour")]

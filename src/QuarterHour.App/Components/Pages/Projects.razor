@@ -1,0 +1,152 @@
+@page "/projects"
+@inherits PeriodPageBase
+@inject ISnackbar Snackbar
+
+<PageTitle>Projects · QuarterHour</PageTitle>
+
+<div class="qh-page-head">
+    <div>
+        <MudText Typo="Typo.h4" Class="qh-title">Projects</MudText>
+        <MudText Typo="Typo.body2" Class="qh-muted">
+            The repositories agents worked in. Give a project the name you use on timesheets; projects that share a name are described together.
+            Mappings on the board keep working after a rename.
+        </MudText>
+    </div>
+</div>
+
+@if (Sheet is null)
+{
+    <PageLoading Error="@LoadError" />
+}
+else
+{
+    <MudPaper Class="qh-panel" Elevation="0">
+        @if (_rows.Count == 0)
+        {
+            <div class="qh-empty">No agent sessions found in this period.</div>
+        }
+        else
+        {
+            <table class="qh-table qh-projects">
+                <thead>
+                    <tr><th>Repository</th><th>Friendly name</th><th>Folders</th><th>Agents</th><th class="qh-num">This period</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (ProjectRow row in _rows)
+                    {
+                        int sharing = _rows.Count(other => other.Key != row.Key && string.Equals(other.Label, row.Label, StringComparison.OrdinalIgnoreCase));
+                        <tr class="@(row.Seen ? "" : "qh-row-disabled")" data-project="@row.Key">
+                            <td>
+                                <b>@row.RepositoryName</b>
+                                @foreach (string repository in row.Repositories)
+                                {
+                                    <div class="qh-muted">@repository</div>
+                                }
+                            </td>
+                            <td>
+                                <MudTextField T="string" Value="@row.FriendlyName" ValueChanged="value => Rename(row, value)"
+                                              Variant="Variant.Text" Margin="Margin.Dense" Placeholder="@row.RepositoryName" Clearable="true"
+                                              aria-label="@($"Friendly name for {row.RepositoryName}")" />
+                                @if (sharing > 0)
+                                {
+                                    <div class="qh-muted">Described together with @Ui.Plural(sharing, "other project")</div>
+                                }
+                            </td>
+                            <td class="qh-muted">
+                                @foreach (string folder in row.Folders)
+                                {
+                                    <div>@folder</div>
+                                }
+                                @if (!row.Seen)
+                                {
+                                    <div>Not seen this period</div>
+                                }
+                            </td>
+                            <td class="qh-muted">@string.Join(", ", row.Agents)</td>
+                            <td class="qh-num">@(row.Raw > TimeSpan.Zero ? Ui.Duration(row.Raw) : "")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </MudPaper>
+}
+
+@code {
+    private List<ProjectRow> _rows = [];
+
+    private sealed record ProjectRow(string Key, string RepositoryName, string? FriendlyName, IReadOnlyList<string> Folders,
+        IReadOnlyList<string> Repositories, IReadOnlyList<string> Agents, TimeSpan Raw, bool Seen)
+    {
+        public string Label => FriendlyName ?? RepositoryName;
+    }
+
+    protected override Task OnSheetLoadedAsync()
+    {
+        List<ProjectRow> rows = [];
+        foreach (IGrouping<string, ActivityResult> group in Sheet!.Activities
+                     .Where(result => result.Activity.Source == ActivitySource.Agent)
+                     .GroupBy(result => result.Activity.GroupKey))
+        {
+            if (ProjectNaming.KeyOfGroup(group.Key) is not { } key)
+            {
+                continue;
+            }
+
+            List<Activity> activities = group.Select(result => result.Activity).DistinctBy(activity => activity.Id).ToList();
+            rows.Add(new ProjectRow(
+                key,
+                activities[0].ProjectName ?? key,
+                Config.FindProject(key)?.FriendlyName,
+                activities.Select(activity => activity.ProjectPath).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).Order().ToList(),
+                activities.Select(activity => activity.Repository).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).Order().ToList(),
+                activities.Select(activity => activity.Agent).OfType<string>().Distinct().Order().ToList(),
+                group.Aggregate(TimeSpan.Zero, (total, result) => total + result.Raw),
+                Seen: true));
+        }
+
+        rows.AddRange(Config.Projects
+            .Where(project => rows.All(row => row.Key != project.Key))
+            .Select(project => new ProjectRow(project.Key, project.Key, project.FriendlyName, [], [], [], TimeSpan.Zero, Seen: false)));
+
+        _rows = rows
+            .OrderBy(row => !row.Seen)
+            .ThenBy(row => row.Label, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(row => row.RepositoryName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return Task.CompletedTask;
+    }
+
+    private void Rename(ProjectRow row, string? value)
+    {
+        string? friendly = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        if (string.Equals(friendly, row.FriendlyName, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        string newName = friendly ?? row.RepositoryName;
+        IReadOnlyList<Rule> affected = ProjectRenames.AffectedRules(Config.Rules, row.Label, newName);
+        Workspace.UpdateConfig(config =>
+        {
+            ProjectSettings? project = config.FindProject(row.Key);
+            if (project is null)
+            {
+                project = new ProjectSettings { Key = row.Key };
+                config.Projects.Add(project);
+            }
+
+            project.FriendlyName = friendly;
+        });
+
+        if (affected.Count > 0)
+        {
+            string names = string.Join(", ", affected.Select(rule => $"“{rule.Name}”"));
+            Snackbar.Add($"{Ui.Plural(affected.Count, "rule")} match on the project's name and now behave differently: {names}. Check them on the Rules page.", Severity.Warning);
+        }
+        else
+        {
+            Snackbar.Add(friendly is null ? $"{row.RepositoryName} uses its own name again." : $"{row.RepositoryName} is now called {friendly}.", Severity.Success);
+        }
+    }
+}
