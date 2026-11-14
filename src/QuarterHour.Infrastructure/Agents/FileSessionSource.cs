@@ -142,6 +142,8 @@ public abstract class FileSessionSource : IAgentSessionSource
     private static AgentSession? Trim(AgentSession session, DateTimeOffset from, DateTimeOffset to)
     {
         List<DateTimeOffset> inRange = session.Timestamps.Where(timestamp => timestamp >= from && timestamp < to).ToList();
-        return inRange.Count == 0 ? null : session with { Timestamps = inRange };
+        return inRange.Count == 0
+            ? null
+            : session with { Timestamps = inRange, Claims = session.Claims.Where(claim => claim.At >= from && claim.At < to).ToList() };
     }
 }

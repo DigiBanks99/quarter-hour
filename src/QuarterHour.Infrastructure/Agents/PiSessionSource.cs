@@ -7,11 +7,14 @@ namespace QuarterHour.Infrastructure.Agents;
 /// <summary>
 /// The Pi coding agent writes ~/.pi/agent/sessions/--&lt;path&gt;--/&lt;timestamp&gt;_&lt;id&gt;.jsonl: a "session" header
 /// (id, cwd), "message" entries with ISO timestamps and "session_info" entries that name the session.
-/// PI_CODING_AGENT_SESSION_DIR moves it.
+/// PI_CODING_AGENT_SESSION_DIR moves it. Tool calls (in assistant messages) and tool results (role toolResult) hold
+/// the claims.
 /// </summary>
 public sealed class PiSessionSource : FileSessionSource
 {
     private static readonly string[] Wanted = ["type", "timestamp", "cwd", "id", "name"];
+    private static readonly byte[] ToolResult = "\"toolResult\""u8.ToArray();
+    private static readonly byte[] ToolCall = "\"toolCall\""u8.ToArray();
 
     public override AgentKind Kind => AgentKind.Pi;
     public override string Name => "Pi";
@@ -36,6 +39,7 @@ public sealed class PiSessionSource : FileSessionSource
     internal static AgentSession? Parse(string path)
     {
         List<DateTimeOffset> timestamps = [];
+        List<Claim> claims = [];
         string? id = null;
         string? cwd = null;
         string? name = null;
@@ -52,6 +56,10 @@ public sealed class PiSessionSource : FileSessionSource
                     if (JsonLines.TryTimestamp(values.GetValueOrDefault("timestamp"), out DateTimeOffset timestamp))
                     {
                         timestamps.Add(timestamp);
+                        if (ClaimMatcher.MightClaim(line.Span) && (line.Span.IndexOf(ToolResult) >= 0 || line.Span.IndexOf(ToolCall) >= 0))
+                        {
+                            claims.AddRange(ClaimMatcher.Find(line.Span, timestamp));
+                        }
                     }
 
                     break;
@@ -70,6 +78,7 @@ public sealed class PiSessionSource : FileSessionSource
                 Title = name,
                 ProjectPath = cwd,
                 Timestamps = timestamps,
+                Claims = claims,
             };
     }
 }

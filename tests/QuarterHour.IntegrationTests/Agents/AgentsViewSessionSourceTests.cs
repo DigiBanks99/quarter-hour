@@ -8,7 +8,9 @@ namespace QuarterHour.IntegrationTests.Agents;
 
 public sealed class AgentsViewSessionSourceTests : IDisposable
 {
-    private readonly ScriptedHandler _agentsView = new(request =>
+    private readonly ScriptedHandler _agentsView = new(Respond);
+
+    private static HttpResponseMessage Respond(HttpRequestMessage request)
     {
         string path = request.RequestUri!.AbsolutePath;
         string query = request.RequestUri.Query;
@@ -35,10 +37,16 @@ public sealed class AgentsViewSessionSourceTests : IDisposable
                   {"id":2,"ordinal":1,"role":"assistant","timestamp":"2026-11-10T06:04:00Z","content":"done"}
                 ],"count":2,"last_ordinal":1}
                 """),
+            "/api/v1/search/content" => ScriptedHandler.Json("""
+                {"matches":[
+                  {"session_id":"g-1","project":"portal","agent":"gemini","location":"tool_result","role":"tool","ordinal":3,"timestamp":"2026-11-10T06:04:00Z","snippet":"...ed\n[main 7b8c9d0] fix: tidy the styles\n 4 files changed...","ordinal_range":[3,3]},
+                  {"session_id":"unknown","timestamp":"2026-11-10T06:04:00Z","snippet":"[main 1234567] someone else's"}
+                ],"active_filter_applied":true,"revision_bound":false}
+                """),
             "/api/v1/sessions/x-1/messages" => ScriptedHandler.Json("""{"messages":[{"ordinal":0,"role":"user","timestamp":"2026-11-11T09:00:00Z"}],"count":1,"last_ordinal":0}"""),
             _ => new HttpResponseMessage(HttpStatusCode.NotFound),
         };
-    });
+    }
 
     [Test]
     public async Task AgentsViewIsRunning()
@@ -58,6 +66,18 @@ public sealed class AgentsViewSessionSourceTests : IDisposable
         ItShouldReadEveryPage();
         ItShouldReadMessageTimes();
         ItShouldNameTheSessions();
+        ItShouldClaimFromOneToolOutputSearch();
+
+        void ItShouldClaimFromOneToolOutputSearch()
+        {
+            gemini.Claims.Select(claim => claim.Value).ShouldBe(["7b8c9d0"]);
+            Uri search = _agentsView.Requests.Single(request => request.RequestUri!.AbsolutePath == "/api/v1/search/content").RequestUri!;
+            System.Web.HttpUtility.ParseQueryString(search.Query).ShouldSatisfyAllConditions(
+                query => query["mode"].ShouldBe("regex"),
+                query => query["in"].ShouldBe("tool_input,tool_result"),
+                query => query["pattern"].ShouldNotBeNullOrEmpty(),
+                query => query["date_from"].ShouldBe("2026-11-01"));
+        }
 
         void ItShouldSkipAgentsAlreadyScanned() => result.Sessions.ShouldNotContain(session => session.SessionId == "c-1");
 
@@ -70,6 +90,24 @@ public sealed class AgentsViewSessionSourceTests : IDisposable
             () => gemini.Agent.ShouldBe("gemini"),
             () => cursor.Title.ShouldBe("Line one line two"),
             () => cursor.ProjectPath.ShouldBe("api"));
+    }
+
+    [Test]
+    public async Task AgentsViewIsTooOldToSearchToolOutput()
+    {
+        using ScriptedHandler older = new(request => request.RequestUri!.AbsolutePath == "/api/v1/search/content"
+            ? new HttpResponseMessage(HttpStatusCode.NotFound)
+            : Respond(request));
+        AgentsViewSessionSource source = new(new HttpClient(older));
+
+        AgentScanResult result = await source.ScanAsync(Scans.November(new AgentSettings { AgentsView = new AgentsViewSettings { Enabled = true } }), CancellationToken.None);
+
+        ItShouldStillReadTheSessions();
+        ItShouldSuggestAnUpdate();
+
+        void ItShouldStillReadTheSessions() => result.Sessions.ShouldNotBeEmpty();
+
+        void ItShouldSuggestAnUpdate() => result.Problems.ShouldContain(problem => problem.Contains("Update AgentsView"));
     }
 
     [Test]

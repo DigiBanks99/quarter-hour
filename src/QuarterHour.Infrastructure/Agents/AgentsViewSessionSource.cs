@@ -10,11 +10,17 @@ namespace QuarterHour.Infrastructure.Agents;
 /// <summary>
 /// Reads sessions from a running AgentsView (agentsview serve), which already indexes 50+ agents. Sessions active
 /// in the range come from /api/v1/sessions; their message timestamps from /api/v1/sessions/{id}/messages.
+/// Claims come from one regex content search over tool inputs and results for the whole range; an AgentsView too old
+/// to have that search leaves attribution to time.
 /// </summary>
 public sealed class AgentsViewSessionSource : IAgentSessionSource
 {
     private const int SessionPageSize = 200;
     private const int MessagePageSize = 500;
+    private const int MatchPageSize = 500;
+
+    /// <summary>The claim markers as one RE2 pattern; <see cref="ClaimMatcher"/> reads the claims out of the snippets.</summary>
+    internal const string ClaimPattern = @"\[[^\]]+ [0-9a-f]{7,40}\] |pullRequestId|/pullrequest/[0-9]+";
 
     private static readonly Dictionary<string, AgentKind> BuiltInAgents = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -116,15 +122,82 @@ public sealed class AgentsViewSessionSource : IAgentSessionSource
         });
         await Task.WhenAll(fetches);
 
+        if (sessions.Count > 0)
+        {
+            Dictionary<string, List<Claim>> claims = await ClaimsAsync(baseUrl, request, problems, cancellationToken);
+            sessions = sessions
+                .Select(session => claims.TryGetValue(session.SessionId, out List<Claim>? found)
+                    ? session with { Claims = found.Where(claim => claim.At >= request.From && claim.At < request.To).ToList() }
+                    : session)
+                .ToList();
+        }
+
         return new AgentScanResult(Name, sessions, [baseUrl], problems);
     }
 
-    private async Task<List<SessionDto>> ListSessionsAsync(string baseUrl, AgentScanRequest request, CancellationToken cancellationToken)
+    private async Task<Dictionary<string, List<Claim>>> ClaimsAsync(string baseUrl, AgentScanRequest request, List<string> problems, CancellationToken cancellationToken)
+    {
+        (string dateFrom, string dateTo, string timeZone) = Dates(request);
+        Dictionary<string, List<Claim>> claims = new(StringComparer.Ordinal);
+        int cursor = 0;
+        try
+        {
+            for (int page = 0; page < 20; page++)
+            {
+                string url = $"{baseUrl}/api/v1/search/content?pattern={Uri.EscapeDataString(ClaimPattern)}&mode=regex&in=tool_input,tool_result" +
+                             $"&date_from={dateFrom}&date_to={dateTo}&timezone={Uri.EscapeDataString(timeZone)}&include_children=true&include_one_shot=true" +
+                             $"&limit={MatchPageSize}" + (cursor > 0 ? $"&cursor={cursor}" : "");
+                using HttpResponseMessage response = await _http.GetAsync(url, cancellationToken);
+                if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                {
+                    problems.Add("This AgentsView can't search tool output, so its sessions' commits and pull requests are attributed by time. Update AgentsView to fix that.");
+                    return claims;
+                }
+
+                response.EnsureSuccessStatusCode();
+                MatchPage? result = await response.Content.ReadFromJsonAsync<MatchPage>(cancellationToken);
+                foreach (MatchDto match in result?.Matches ?? [])
+                {
+                    if (match.SessionId is not { Length: > 0 } sessionId || match.Snippet is null || !JsonLines.TryTimestamp(match.Timestamp, out DateTimeOffset at))
+                    {
+                        continue;
+                    }
+
+                    if (!claims.TryGetValue(sessionId, out List<Claim>? list))
+                    {
+                        claims[sessionId] = list = [];
+                    }
+
+                    list.AddRange(ClaimMatcher.Find(match.Snippet, at));
+                }
+
+                if (result?.NextCursor is not > 0 || result.NextCursor <= cursor)
+                {
+                    break;
+                }
+
+                cursor = result.NextCursor.Value;
+            }
+        }
+        catch (Exception exception) when (exception is HttpRequestException or System.Text.Json.JsonException)
+        {
+            problems.Add($"AgentsView's tool output search failed ({exception.Message}), so its sessions' commits and pull requests are attributed by time.");
+        }
+
+        return claims;
+    }
+
+    private static (string From, string To, string TimeZone) Dates(AgentScanRequest request)
     {
         string timeZone = TimeZoneInfo.TryConvertWindowsIdToIanaId(request.TimeZone.Id, out string? iana) ? iana : request.TimeZone.Id;
         string dateFrom = TimeZoneInfo.ConvertTime(request.From, request.TimeZone).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         string dateTo = TimeZoneInfo.ConvertTime(request.To.AddTicks(-1), request.TimeZone).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        return (dateFrom, dateTo, timeZone);
+    }
 
+    private async Task<List<SessionDto>> ListSessionsAsync(string baseUrl, AgentScanRequest request, CancellationToken cancellationToken)
+    {
+        (string dateFrom, string dateTo, string timeZone) = Dates(request);
         List<SessionDto> sessions = [];
         string? cursor = null;
         for (int page = 0; page < 100; page++)
@@ -208,6 +281,15 @@ public sealed class AgentsViewSessionSource : IAgentSessionSource
         [property: JsonPropertyName("first_message")] string? FirstMessage,
         [property: JsonPropertyName("started_at")] string? StartedAt,
         [property: JsonPropertyName("ended_at")] string? EndedAt);
+
+    private sealed record MatchPage(
+        [property: JsonPropertyName("matches")] List<MatchDto>? Matches,
+        [property: JsonPropertyName("next_cursor")] int? NextCursor);
+
+    private sealed record MatchDto(
+        [property: JsonPropertyName("session_id")] string? SessionId,
+        [property: JsonPropertyName("timestamp")] string? Timestamp,
+        [property: JsonPropertyName("snippet")] string? Snippet);
 
     private sealed record MessagePage(
         [property: JsonPropertyName("messages")] List<MessageDto>? Messages,
