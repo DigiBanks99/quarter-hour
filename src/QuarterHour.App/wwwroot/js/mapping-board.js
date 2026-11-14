@@ -1,6 +1,7 @@
 // The mapping board's links: SVG curves from each group's handle to its category, drawn over the two columns.
 // Groups can be linked by dragging the card onto a category (HTML drag and drop) or by pulling a line from the
 // card's handle (pointer events). Blazor owns the cards; this module only owns the SVG inside the overlay element.
+// A board may say which targets each card can go to; the others stay dark while that card is dragged.
 
 const SVG = 'http://www.w3.org/2000/svg';
 
@@ -14,6 +15,7 @@ class Board {
         this.dotnet = dotnet;
         this.links = [];
         this.selected = null;
+        this.allowed = null;
         this.frame = 0;
         this.svg = document.createElementNS(SVG, 'svg');
         this.svg.classList.add('qh-links');
@@ -46,10 +48,22 @@ class Board {
         this.listeners.push(() => target.removeEventListener(type, handler, { capture }));
     }
 
-    setLinks(links, selected) {
+    setLinks(links, selected, allowed) {
         this.links = links || [];
         this.selected = selected || null;
+        this.allowed = allowed || null;
         this.schedule();
+    }
+
+    accepts(source, target) {
+        return !target || !this.allowed || (this.allowed[source] || []).includes(target.dataset.target);
+    }
+
+    // Dims the targets a card can't go to while it is dragged or a line is pulled from it.
+    markAllowed(source) {
+        for (const target of this.root.querySelectorAll('[data-target]')) {
+            target.classList.toggle('qh-target-off', source !== null && !this.accepts(source, target));
+        }
     }
 
     schedule() {
@@ -140,10 +154,12 @@ class Board {
         this.root.classList.add('qh-linking');
         handle.setPointerCapture(event.pointerId);
 
+        this.markAllowed(source);
         const move = moveEvent => {
             const end = { x: moveEvent.clientX - bounds.left, y: moveEvent.clientY - bounds.top };
             temp.setAttribute('d', curve(start, end));
-            this.highlight(this.targetAt(moveEvent.clientX, moveEvent.clientY));
+            const over = this.targetAt(moveEvent.clientX, moveEvent.clientY);
+            this.highlight(this.accepts(source, over) ? over : null);
         };
 
         const finish = upEvent => {
@@ -156,9 +172,10 @@ class Board {
 
             temp.remove();
             this.root.classList.remove('qh-linking');
+            this.markAllowed(null);
             const target = upEvent.type === 'pointerup' ? this.targetAt(upEvent.clientX, upEvent.clientY) : null;
             this.highlight(null);
-            if (target) {
+            if (target && this.accepts(source, target)) {
                 this.dotnet.invokeMethodAsync('OnLink', source, target.dataset.target);
             }
         };
@@ -190,7 +207,7 @@ class Board {
 
     dragStart(event) {
         const card = event.target.closest('[data-source]');
-        if (!card) {
+        if (!card || card.getAttribute('draggable') === 'false') {
             return;
         }
 
@@ -199,11 +216,12 @@ class Board {
         event.dataTransfer.effectAllowed = 'link';
         this.dragging = card.dataset.source;
         this.root.classList.add('qh-dragging');
+        this.markAllowed(this.dragging);
     }
 
     dragOver(event) {
         const target = event.target.closest('[data-target]');
-        if (!target || !this.dragging) {
+        if (!target || !this.dragging || !this.accepts(this.dragging, target)) {
             return;
         }
 
@@ -223,7 +241,7 @@ class Board {
         const target = event.target.closest('[data-target]');
         const source = this.dragging || event.dataTransfer.getData('application/x-quarterhour-group');
         this.endDrag();
-        if (!target || !source) {
+        if (!target || !source || !this.accepts(source, target)) {
             return;
         }
 
@@ -234,6 +252,7 @@ class Board {
     endDrag() {
         this.dragging = null;
         this.root.classList.remove('qh-dragging');
+        this.markAllowed(null);
         this.highlight(null);
     }
 

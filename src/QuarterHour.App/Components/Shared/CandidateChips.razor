@@ -1,0 +1,42 @@
+@* The commits and pull requests describing a block of agent work: ✓ claimed by its transcript, ~ attributed by time. *@
+@if (Items.Count > 0 || ReassignHref is not null)
+{
+    <div class="qh-cands" @onclick:stopPropagation="true">
+        @foreach (Placement item in Items)
+        {
+            (string mark, string how) = Mark(item);
+            string title = $"{how}\n\n{item.Details}";
+            @if (item.PullRequest?.Url is { } url)
+            {
+                <a class="@($"qh-cand qh-cand-{item.Place.ToString().ToLowerInvariant()}")" href="@url" target="_blank" rel="noopener" title="@title">
+                    <b>@mark</b> @item.Text
+                </a>
+            }
+            else
+            {
+                <span class="@($"qh-cand qh-cand-{item.Place.ToString().ToLowerInvariant()}")" title="@title"><b>@mark</b> @item.Text</span>
+            }
+        }
+        @if (ReassignHref is not null)
+        {
+            <a class="qh-cand-reassign" href="@ReassignHref">Reassign…</a>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public IReadOnlyList<Placement> Items { get; set; } = [];
+
+    /// <summary>Where "Reassign…" goes; no link when null.</summary>
+    [Parameter] public string? ReassignHref { get; set; }
+
+    public static (string Mark, string How) Mark(Placement item) => item.Place switch
+    {
+        CandidatePlace.Claimed => ("✓", "Claimed: the session's tool output shows it made this"),
+        CandidatePlace.Moved => ("↪", "Moved here by you"),
+        CandidatePlace.NotRelevant => ("⊘", "Marked not relevant by you"),
+        CandidatePlace.InEntry => ("✎", "Made into a manual entry"),
+        CandidatePlace.Unattributed => ("?", "No session could take it"),
+        _ => ("~", "Attributed by time: the session was working in the project when it was made"),
+    };
+}

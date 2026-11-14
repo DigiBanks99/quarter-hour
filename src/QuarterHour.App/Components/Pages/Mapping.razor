@@ -11,10 +11,20 @@
 <div class="qh-page-head">
     <div>
         <MudText Typo="Typo.h4" Class="qh-title">Mapping board</MudText>
-        <MudText Typo="Typo.body2" Class="qh-muted">
-            Drag a meeting or project onto a category, or pull a line from its <span class="qh-port-sample"></span> handle. Solid lines are your mappings,
-            dashed lines come from <MudLink Href="rules">heuristic rules</MudLink>. Click a line or card to see more.
-        </MudText>
+        @if (_commits)
+        {
+            <MudText Typo="Typo.body2" Class="qh-muted">
+                Drag a commit or pull request onto the session it describes, or pull a line from its <span class="qh-port-sample"></span> handle. It only changes
+                the session's description, never its time. Ones no session took wait under Unattributed: drop them on a session, or make them a manual entry.
+            </MudText>
+        }
+        else
+        {
+            <MudText Typo="Typo.body2" Class="qh-muted">
+                Drag a meeting or project onto a category, or pull a line from its <span class="qh-port-sample"></span> handle. Solid lines are your mappings,
+                dashed lines come from <MudLink Href="rules">heuristic rules</MudLink>. Click a line or card to see more.
+            </MudText>
+        }
     </div>
     <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Outlined.Add" OnClick="NewCategoryAsync">New category</MudButton>
 </div>
@@ -23,15 +33,14 @@
 {
     <PageLoading Error="@LoadError" />
 }
+else if (_commits)
+{
+    <CandidateBoard Sheet="Sheet" Day="Day" Toggle="SourceToggle" />
+}
 else
 {
     <MudPaper Class="qh-panel qh-toolbar" Elevation="0">
-        <div class="qh-source-toggle">
-            <MudButton Variant="@(_source == ActivitySource.Calendar ? Variant.Filled : Variant.Outlined)" Color="Color.Primary" Size="Size.Small"
-                       StartIcon="@Icons.Material.Outlined.Event" OnClick="() => SetSource(ActivitySource.Calendar)">Meetings (@Count(ActivitySource.Calendar))</MudButton>
-            <MudButton Variant="@(_source == ActivitySource.Agent ? Variant.Filled : Variant.Outlined)" Color="Color.Primary" Size="Size.Small"
-                       StartIcon="@Icons.Material.Outlined.SmartToy" OnClick="() => SetSource(ActivitySource.Agent)">Agent work (@Count(ActivitySource.Agent))</MudButton>
-        </div>
+        @SourceToggle
         <MudTextField T="string" @bind-Value="_search" Placeholder="Search" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
                       Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" DebounceInterval="200" Clearable="true" Class="qh-search" />
         <MudSelect T="string" @bind-Value="_show" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Class="qh-show">
@@ -168,6 +177,28 @@ else
 }
 
 @code {
+    [SupplyParameterFromQuery(Name = "view")] public string? View { get; set; }
+
+    /// <summary>The day the commits view starts on, from "Reassign…" on the day page.</summary>
+    [SupplyParameterFromQuery(Name = "day")] public string? DayText { get; set; }
+
+    private DateOnly? Day => DateOnly.TryParseExact(DayText, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateOnly day) ? day : null;
+
+    private bool _commits;
+
+    private RenderFragment SourceToggle => @<div class="qh-source-toggle">
+        <MudButton Variant="@(!_commits && _source == ActivitySource.Calendar ? Variant.Filled : Variant.Outlined)" Color="Color.Primary" Size="Size.Small"
+                   StartIcon="@Icons.Material.Outlined.Event" OnClick="() => SetSource(ActivitySource.Calendar)">Meetings (@Count(ActivitySource.Calendar))</MudButton>
+        <MudButton Variant="@(!_commits && _source == ActivitySource.Agent ? Variant.Filled : Variant.Outlined)" Color="Color.Primary" Size="Size.Small"
+                   StartIcon="@Icons.Material.Outlined.SmartToy" OnClick="() => SetSource(ActivitySource.Agent)">Agent work (@Count(ActivitySource.Agent))</MudButton>
+        <MudBadge Content="@Unattributed" Visible="@(Unattributed > 0)" Color="Color.Warning" Overlap="true" Bordered="true">
+            <MudButton Variant="@(_commits ? Variant.Filled : Variant.Outlined)" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Outlined.Commit"
+                       OnClick="ShowCommits" title="@($"{Ui.Plural(Unattributed, "commit or pull request", "commits and pull requests")} no session took")">Commits &amp; PRs → Sessions</MudButton>
+        </MudBadge>
+    </div>;
+
+    private int Unattributed => Sheet?.Unattributed.Count() ?? 0;
+
     private ElementReference _boardElement;
     private ElementReference _overlayElement;
     private IJSObjectReference? _module;
@@ -199,6 +230,21 @@ else
         })
         .ToList();
 
+    protected override void OnParametersSet()
+    {
+        if (string.Equals(View, "commits", StringComparison.OrdinalIgnoreCase))
+        {
+            _commits = true;
+        }
+    }
+
+    private async Task ShowCommits()
+    {
+        _commits = true;
+        _selected = null;
+        await DisposeBoardAsync();
+    }
+
     protected override Task OnSheetLoadedAsync()
     {
         _groups = Sheet is null ? [] : MappingGroups.Build(Sheet, Workspace.ConfigSnapshot());
@@ -212,7 +258,7 @@ else
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (Sheet is null)
+        if (Sheet is null || _commits)
         {
             return;
         }
@@ -264,6 +310,7 @@ else
 
     private void SetSource(ActivitySource source)
     {
+        _commits = false;
         _source = source;
         _sourceChosen = true;
         _selected = null;
@@ -358,6 +405,12 @@ else
     public async ValueTask DisposeAsync()
     {
         base.Dispose();
+        await DisposeBoardAsync();
+    }
+
+    /// <summary>Lets go of the categories board's script, as when the commits view replaces it.</summary>
+    private async Task DisposeBoardAsync()
+    {
         try
         {
             if (_board is not null)
@@ -376,6 +429,9 @@ else
             // The browser tab is already gone.
         }
 
+        _board = null;
+        _module = null;
         _self?.Dispose();
+        _self = null;
     }
 }

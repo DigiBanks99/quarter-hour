@@ -90,6 +90,13 @@ else
             <MudPaper Class="qh-panel" Elevation="0">
                 <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" TabPanelsClass="pt-3" @bind-ActivePanelIndex="_tab">
                     <MudTabPanel Text="@($"Activities ({visible.Count})")">
+                        @if (Sheet.Unattributed.Count(candidate => candidate.Day(Workspace.TimeZone) == _date) is > 0 and var orphans)
+                        {
+                            <MudAlert Severity="Severity.Info" Dense="true" Class="mb-2">
+                                @Ui.Plural(orphans, "commit or pull request", "commits and pull requests") from this day @(orphans == 1 ? "isn't" : "aren't") on any session.
+                                <MudLink Href="@($"mapping?view=commits&day={Ui.DateKey(_date)}")">Attribute or make an entry</MudLink>
+                            </MudAlert>
+                        }
                         @if (visible.Count == 0)
                         {
                             <MudText Class="qh-muted">No activities. Sync the calendar, or add a manual entry below.</MudText>
@@ -109,6 +116,10 @@ else
                                                 <td>
                                                     <div class="qh-act-title"><MudIcon Icon="@Ui.SourceIcon(item.Activity.Source)" Size="Size.Small" /> @item.Description</div>
                                                     <div class="qh-act-meta">@Meta(item)</div>
+                                                    @if (item.Activity.Source == ActivitySource.Agent && Sheet.Candidates.Count > 0)
+                                                    {
+                                                        <CandidateChips Items="@Sheet.CandidatesOf(item.Activity.Id).ToList()" ReassignHref="@($"mapping?view=commits&day={Ui.DateKey(_date)}")" />
+                                                    }
                                                 </td>
                                                 <td><StatusChip Status="item.Status" Reason="@Reason(item)" /></td>
                                                 <td class="qh-col-category">

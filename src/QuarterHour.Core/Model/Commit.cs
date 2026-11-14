@@ -14,6 +14,9 @@ public sealed record Commit
     /// <summary>The project the commit was found in, keyed like its agent group (repository name, lower case).</summary>
     public required string ProjectKey { get; init; }
 
+    /// <summary>The message after the subject, for showing the whole commit on hover.</summary>
+    public string? Body { get; init; }
+
     public string ShortSha => Sha.Length > 7 ? Sha[..7] : Sha;
 
     /// <summary>Whether a block's transcript claimed it, rather than it being attributed by time.</summary>
