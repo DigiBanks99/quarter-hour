@@ -16,6 +16,9 @@ public sealed class Journal
     /// <summary>Changes made to whole timesheet lines (such as the day's description of agent work), keyed by line id.</summary>
     public Dictionary<string, LineOverride> Lines { get; set; } = [];
 
+    /// <summary>Where commits and pull requests go instead of where attribution put them, keyed like "commit:&lt;sha&gt;" or "pr:&lt;id&gt;".</summary>
+    public Dictionary<string, CandidateOverride> Candidates { get; set; } = [];
+
     public static string DayKey(DateOnly date) => date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
 
     public DayOverride? FindDay(DateOnly date) => Days.GetValueOrDefault(DayKey(date));
@@ -26,6 +29,12 @@ public sealed class Journal
         Days ??= [];
         ManualEntries ??= [];
         Lines ??= [];
+        Candidates ??= [];
+        foreach (ManualEntry entry in ManualEntries)
+        {
+            entry.Candidates ??= [];
+        }
+
         return this;
     }
 }
@@ -40,6 +49,18 @@ public sealed class LineOverride
     public int? Minutes { get; set; }
 
     public bool IsEmpty => string.IsNullOrWhiteSpace(Description) && string.IsNullOrWhiteSpace(Sentiment) && string.IsNullOrWhiteSpace(Ticket) && Minutes is null;
+}
+
+/// <summary>A commit or pull request moved to another block of agent work, or marked not relevant.</summary>
+public sealed class CandidateOverride
+{
+    /// <summary>The block of agent work (activity id) it describes instead.</summary>
+    public string? BlockId { get; set; }
+
+    /// <summary>It describes nothing.</summary>
+    public bool NotRelevant { get; set; }
+
+    public bool IsEmpty => BlockId is null && !NotRelevant;
 }
 
 public sealed class ActivityOverride
@@ -78,4 +99,7 @@ public sealed class ManualEntry
     public string? CategoryId { get; set; }
     public string? Location { get; set; }
     public string Description { get; set; } = "";
+
+    /// <summary>The unattributed commits and pull requests this entry was made from, which leave the Unattributed column while it exists.</summary>
+    public List<string> Candidates { get; set; } = [];
 }
