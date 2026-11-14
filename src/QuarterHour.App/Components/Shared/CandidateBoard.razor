@@ -1,0 +1,415 @@
+@* The mapping board's "Commits & PRs → Sessions" view: drag a commit or pull request onto the block of agent work it describes. *@
+@implements IAsyncDisposable
+@inject WorkspaceService Workspace
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+@inject IDialogService Dialogs
+
+<MudPaper Class="qh-panel qh-toolbar" Elevation="0">
+    @Toggle
+    <MudSelect T="string" Value="@_day" ValueChanged="SetDay" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Class="qh-show" Label="Day">
+        <MudSelectItem T="string" Value="@All">Whole period</MudSelectItem>
+        @foreach (DateOnly day in Days)
+        {
+            <MudSelectItem T="string" Value="@Ui.DateKey(day)">@Ui.Day(day)</MudSelectItem>
+        }
+    </MudSelect>
+    <MudSelect T="string" @bind-Value="_project" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Class="qh-show" Label="Project">
+        <MudSelectItem T="string" Value="@All">All projects</MudSelectItem>
+        @foreach (string project in Projects)
+        {
+            <MudSelectItem T="string" Value="@project">@project</MudSelectItem>
+        }
+    </MudSelect>
+    <MudTextField T="string" @bind-Value="_search" Placeholder="Search" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                  Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" DebounceInterval="200" Clearable="true" Class="qh-search" />
+    <div class="qh-legend">
+        <span><i class="qh-legend-solid"></i>✓ claimed or ↪ moved by you</span>
+        <span><i class="qh-legend-dashed"></i>~ by time</span>
+    </div>
+</MudPaper>
+
+@if (Selected is { } selected)
+{
+    <MudPaper Class="qh-panel qh-detail" Elevation="0">
+        <div class="qh-detail-main">
+            <MudIcon Icon="@(selected.PullRequest is null ? Icons.Material.Outlined.Commit : Icons.Material.Outlined.MergeType)" />
+            <div>
+                <div class="qh-detail-title">@selected.Text</div>
+                <div class="qh-muted qh-detail-meta">@ProjectName(selected.ProjectKey) · @selected.Reference · @When(selected)</div>
+                <div class="qh-detail-mapping">@PlaceText(selected)</div>
+                <pre class="qh-cand-details">@selected.Details</pre>
+            </div>
+        </div>
+        <div class="qh-detail-actions">
+            @if (selected.PullRequest?.Url is { } url)
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Outlined.OpenInNew" Href="@url" Target="_blank">Open</MudButton>
+            }
+            @if (selected.IsUnattributed)
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Outlined.MoreTime" OnClick="() => CreateEntryAsync([selected])">Create entry</MudButton>
+            }
+            @if (Workspace.Journal.Candidates.ContainsKey(selected.Key))
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Outlined.Undo" OnClick="() => Reset(selected)">Undo my change</MudButton>
+            }
+            <MudIconButton Icon="@Icons.Material.Outlined.Close" Size="Size.Small" OnClick="() => _selected = null" aria-label="Close details" />
+        </div>
+    </MudPaper>
+}
+
+<div class="qh-board qh-board-candidates" @ref="_boardElement">
+    <div class="qh-overlay" @ref="_overlayElement"></div>
+    <div class="qh-col qh-orphans">
+        <div class="qh-col-head">
+            <span>Unattributed (@Orphans.Count)</span>
+            @if (_checked.Count > 0)
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" Disabled="!CanCombineChecked" OnClick="() => CreateEntryAsync(Checked)"
+                           title="@(CanCombineChecked ? "One manual entry for these" : "Pick commits and pull requests from one day and project")">Create entry (@_checked.Count)</MudButton>
+            }
+        </div>
+        @if (Orphans.Count == 0)
+        {
+            <div class="qh-empty">Every commit and pull request here describes a session.</div>
+        }
+        @foreach (Placement orphan in Orphans)
+        {
+            <div class="@CardClass(orphan)" data-source="@orphan.Key" draggable="true" @onclick="() => _selected = orphan.Key" @key="orphan.Key" title="@orphan.Details">
+                <div class="qh-card-title">
+                    <span class="qh-cand-check" @onclick:stopPropagation="true">
+                        <MudCheckBox T="bool" Value="@_checked.Contains(orphan.Key)" ValueChanged="value => Check(orphan, value)" Size="Size.Small" Dense="true" aria-label="@($"Select {orphan.Text}")" />
+                    </span>
+                    <span class="qh-card-label">@orphan.Text</span>
+                </div>
+                <div class="qh-card-meta">@ProjectName(orphan.ProjectKey) · @orphan.Reference · @When(orphan)</div>
+                <div class="qh-card-actions" @onclick:stopPropagation="true">
+                    <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Outlined.MoreTime" OnClick="() => CreateEntryAsync([orphan])">Create entry</MudButton>
+                </div>
+            </div>
+        }
+    </div>
+    <div class="qh-col qh-sources">
+        @if (Placed.Count == 0)
+        {
+            <div class="qh-empty">@(Sheet.Candidates.Count == 0 ? EmptyText : "Nothing matches this filter.")</div>
+        }
+        @foreach (IGrouping<string, Placement> project in Placed.GroupBy(placement => ProjectName(placement.ProjectKey)))
+        {
+            <div class="qh-target-group">@project.Key</div>
+            @foreach (Placement placement in project)
+            {
+                <div class="@CardClass(placement)" data-source="@placement.Key" draggable="@((placement.Place != CandidatePlace.InEntry).ToString().ToLowerInvariant())"
+                     @onclick="() => _selected = placement.Key" @key="placement.Key" title="@placement.Details">
+                    <div class="qh-card-title">
+                        <span class="qh-card-label"><b class="qh-cand-mark">@CandidateChips.Mark(placement).Mark</b> @placement.Text</span>
+                    </div>
+                    <div class="qh-card-meta">@placement.Reference · @When(placement)</div>
+                    @if (placement.Place != CandidatePlace.InEntry)
+                    {
+                        <span class="qh-port qh-port-source" data-source-port="@placement.Key" title="Pull a line to a session"></span>
+                    }
+                </div>
+            }
+        }
+    </div>
+    <div class="qh-gap"></div>
+    <div class="qh-col qh-targets">
+        <div class="qh-target qh-target-ignore" data-target="@DirectMappings.NotRelevantTarget" title="Describes no work, such as a version bump">
+            <span class="qh-port qh-port-target" data-target-port="@DirectMappings.NotRelevantTarget"></span>
+            <MudIcon Icon="@Icons.Material.Outlined.Block" Size="Size.Small" />
+            <span class="qh-target-name">Not relevant</span>
+            <span class="qh-target-count">@Visible.Count(placement => placement.Place == CandidatePlace.NotRelevant)</span>
+        </div>
+        @foreach (IGrouping<DateOnly, ActivityResult> day in Blocks.GroupBy(block => block.Date))
+        {
+            <div class="qh-target-group">@Ui.Day(day.Key)</div>
+            @foreach (ActivityResult block in day)
+            {
+                <div class="qh-target qh-target-block" data-target="@block.Activity.Id" title="@BlockTitle(block)">
+                    <span class="qh-port qh-port-target" data-target-port="@block.Activity.Id"></span>
+                    <span class="qh-target-name">
+                        @Ui.Time(block.Activity.Start)–@Ui.Time(block.Activity.End) · @block.Activity.Agent · “@(block.Activity.SessionTitle ?? block.Activity.Title)”
+                        <small class="qh-muted">@block.Activity.GroupLabel</small>
+                    </span>
+                    <span class="qh-target-count">@Visible.Count(placement => placement.BlockId == block.Activity.Id)</span>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    private const string All = "";
+    private const string EmptyText = "No commits or pull requests in this period. Turn on \"Describe with commits\" in Settings, then sync.";
+
+    [Parameter, EditorRequired] public PeriodTimesheet Sheet { get; set; } = default!;
+
+    /// <summary>The page's view switch, shown at the start of the toolbar.</summary>
+    [Parameter] public RenderFragment? Toggle { get; set; }
+
+    /// <summary>The day to show first, such as the one "Reassign…" came from.</summary>
+    [Parameter] public DateOnly? Day { get; set; }
+
+    private ElementReference _boardElement;
+    private ElementReference _overlayElement;
+    private IJSObjectReference? _module;
+    private IJSObjectReference? _board;
+    private DotNetObjectReference<CandidateBoard>? _self;
+    private readonly HashSet<string> _checked = new(StringComparer.Ordinal);
+    private string _day = All;
+    private DateOnly? _shownDay;
+    private string _project = All;
+    private string? _search;
+    private string? _selected;
+
+    private TimeZoneInfo TimeZone => Workspace.TimeZone;
+    private IReadOnlyDictionary<string, string> FriendlyNames => Workspace.Config.FriendlyProjectNames();
+
+    private Placement? Selected => _selected is null ? null : Sheet.Candidates.FirstOrDefault(candidate => candidate.Key == _selected);
+
+    private List<DateOnly> Days => Sheet.Candidates.Select(candidate => candidate.Day(TimeZone)).Distinct().Order().ToList();
+
+    private List<string> Projects => Sheet.Candidates.Select(candidate => ProjectName(candidate.ProjectKey)).Distinct(StringComparer.OrdinalIgnoreCase).Order().ToList();
+
+    private DateOnly? DayFilter => _day == All ? null : DateOnly.ParseExact(_day, "yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    private List<Placement> Visible => Sheet.Candidates
+        .Where(candidate => DayFilter is not { } day || candidate.Day(TimeZone) == day)
+        .Where(candidate => _project == All || string.Equals(ProjectName(candidate.ProjectKey), _project, StringComparison.OrdinalIgnoreCase))
+        .Where(candidate => string.IsNullOrWhiteSpace(_search)
+                            || candidate.Details.Contains(_search, StringComparison.OrdinalIgnoreCase)
+                            || candidate.Reference.Contains(_search, StringComparison.OrdinalIgnoreCase))
+        .OrderBy(candidate => candidate.At)
+        .ToList();
+
+    private List<Placement> Orphans => Visible.Where(candidate => candidate.IsUnattributed).ToList();
+
+    private List<Placement> Placed => Visible.Where(candidate => !candidate.IsUnattributed).ToList();
+
+    /// <summary>The blocks any shown candidate could be moved to, oldest first.</summary>
+    private List<ActivityResult> Blocks
+    {
+        get
+        {
+            List<Placement> visible = Visible.Where(candidate => candidate.Place != CandidatePlace.InEntry).ToList();
+            return AgentBlocks
+                .Where(block => visible.Any(candidate => CanTake(block, candidate) || candidate.BlockId == block.Activity.Id))
+                .ToList();
+        }
+    }
+
+    private IEnumerable<ActivityResult> AgentBlocks => Sheet.Activities
+        .Where(item => item.Activity.Source == ActivitySource.Agent)
+        .DistinctBy(item => item.Activity.Id)
+        .OrderBy(item => item.Activity.Start);
+
+    private List<Placement> Checked => Sheet.Candidates.Where(candidate => _checked.Contains(candidate.Key)).ToList();
+
+    private bool CanCombineChecked => CandidateEntries.CanCombine(Checked, TimeZone, FriendlyNames);
+
+    protected override void OnParametersSet()
+    {
+        if (Day != _shownDay)
+        {
+            _shownDay = Day;
+            _day = Day is { } day && Sheet.Period.Contains(day) ? Ui.DateKey(day) : All;
+        }
+
+        _checked.RemoveWhere(key => !Sheet.Candidates.Any(candidate => candidate.Key == key && candidate.IsUnattributed));
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_board is null)
+        {
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/mapping-board.js");
+            _self = DotNetObjectReference.Create(this);
+            _board = await _module.InvokeAsync<IJSObjectReference>("create", _boardElement, _overlayElement, _self);
+        }
+
+        List<ActivityResult> blocks = Blocks;
+        List<object> links = Placed
+            .Where(placement => placement.BlockId is not null || placement.Place == CandidatePlace.NotRelevant)
+            .Select(placement => (object)new
+            {
+                source = placement.Key,
+                target = placement.BlockId ?? DirectMappings.NotRelevantTarget,
+                kind = placement.Place switch
+                {
+                    CandidatePlace.NotRelevant => "ignore",
+                    CandidatePlace.ByTime => "rule",
+                    _ => "direct",
+                },
+                color = placement.Place switch
+                {
+                    CandidatePlace.NotRelevant => "#94a3b8",
+                    CandidatePlace.ByTime => "#64748b",
+                    _ => "#2563eb",
+                },
+                title = PlaceText(placement),
+            })
+            .ToList();
+        Dictionary<string, string[]> allowed = Visible
+            .Where(candidate => candidate.Place != CandidatePlace.InEntry)
+            .ToDictionary(
+                candidate => candidate.Key,
+                candidate => blocks.Where(block => CanTake(block, candidate)).Select(block => block.Activity.Id).Append(DirectMappings.NotRelevantTarget).ToArray());
+        await _board.InvokeVoidAsync("setLinks", links, _selected, allowed);
+    }
+
+    [JSInvokable]
+    public Task OnLink(string source, string target)
+    {
+        Placement? candidate = Sheet.Candidates.FirstOrDefault(item => item.Key == source);
+        if (candidate is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        if (candidate.Place == CandidatePlace.InEntry)
+        {
+            Snackbar.Add($"{candidate.Text} is in a manual entry. Delete the entry to attribute it again.", Severity.Info);
+            return Task.CompletedTask;
+        }
+
+        _selected = candidate.Key;
+        if (target == DirectMappings.NotRelevantTarget)
+        {
+            Workspace.UpdateJournal(journal => journal.Candidates[candidate.Key] = new CandidateOverride { NotRelevant = true });
+            _checked.Remove(candidate.Key);
+            Snackbar.Add($"{candidate.Text} → Not relevant", Severity.Success);
+            return Task.CompletedTask;
+        }
+
+        ActivityResult? block = AgentBlocks.FirstOrDefault(item => item.Activity.Id == target);
+        if (block is null || !CanTake(block, candidate))
+        {
+            Snackbar.Add("A commit or pull request can only describe a session in its own project, on its day or the day either side.", Severity.Warning);
+            return Task.CompletedTask;
+        }
+
+        Workspace.UpdateJournal(journal => journal.Candidates[candidate.Key] = new CandidateOverride { BlockId = block.Activity.Id });
+        _checked.Remove(candidate.Key);
+        Snackbar.Add($"{candidate.Text} → {Ui.Day(block.Date)} {Ui.Time(block.Activity.Start)} “{block.Activity.SessionTitle ?? block.Activity.Title}”", Severity.Success);
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnLinkClicked(string source)
+    {
+        _selected = source;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private bool CanTake(ActivityResult block, Placement candidate) =>
+        CandidateAttribution.CanTake(block.Activity, candidate.ProjectKey, candidate.At, TimeZone, FriendlyNames);
+
+    private void SetDay(string day)
+    {
+        _day = day;
+        _selected = null;
+    }
+
+    private void Check(Placement orphan, bool on)
+    {
+        if (on)
+        {
+            _checked.Add(orphan.Key);
+        }
+        else
+        {
+            _checked.Remove(orphan.Key);
+        }
+    }
+
+    private void Reset(Placement candidate)
+    {
+        Workspace.UpdateJournal(journal => journal.Candidates.Remove(candidate.Key));
+        Snackbar.Add($"{candidate.Text} is attributed automatically again.", Severity.Info);
+    }
+
+    private async Task CreateEntryAsync(IReadOnlyList<Placement> candidates)
+    {
+        if (!CandidateEntries.CanCombine(candidates, TimeZone, FriendlyNames))
+        {
+            return;
+        }
+
+        ManualEntry draft = CandidateEntries.Draft(candidates, Sheet, Workspace.ConfigSnapshot(), TimeZone);
+        DialogParameters<ManualEntryDialog> parameters = new()
+        {
+            { dialog => dialog.Entry, draft },
+            { dialog => dialog.Intro, $"No agent session saw this work, so it has no time yet. Say how long it took and it becomes a manual entry; delete the entry and {(candidates.Count == 1 ? "it goes" : "they go")} back to Unattributed." },
+        };
+        IDialogReference dialog = await Dialogs.ShowAsync<ManualEntryDialog>("Create an entry", parameters, new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true });
+        DialogResult? result = await dialog.Result;
+        if (result is { Canceled: false, Data: ManualEntry entry })
+        {
+            Workspace.UpdateJournal(journal => journal.ManualEntries.Add(entry));
+            _checked.Clear();
+            Snackbar.Add($"Added {Ui.Hours(entry.Minutes)} on {Ui.Day(entry.Date)}: {entry.Description}", Severity.Success);
+        }
+    }
+
+    private string ProjectName(string projectKey) => CandidateEntries.ProjectName(projectKey, Sheet, FriendlyNames);
+
+    private string When(Placement candidate)
+    {
+        DateTime local = TimeZoneInfo.ConvertTime(candidate.At, TimeZone).DateTime;
+        return $"{Ui.Day(DateOnly.FromDateTime(local))} {Ui.Time(local)}";
+    }
+
+    private string PlaceText(Placement candidate)
+    {
+        string how = CandidateChips.Mark(candidate).How;
+        if (candidate.BlockId is { } blockId && AgentBlocks.FirstOrDefault(block => block.Activity.Id == blockId) is { } block)
+        {
+            return $"→ {Ui.Day(block.Date)} {Ui.Time(block.Activity.Start)} “{block.Activity.SessionTitle ?? block.Activity.Title}” ({how.ToLowerInvariant()})";
+        }
+
+        if (candidate.EntryId is { } entryId && Workspace.Journal.ManualEntries.FirstOrDefault(entry => entry.Id == entryId) is { } manual)
+        {
+            return $"In the manual entry on {Ui.Day(manual.Date)}: {manual.Description}";
+        }
+
+        return how;
+    }
+
+    private static string BlockTitle(ActivityResult block) =>
+        $"{block.Activity.GroupLabel} · {block.Activity.Agent} · {Ui.Plural(block.Activity.MessageCount, "message")}{(block.Activity.Branch is { } branch ? " · " + branch : "")}";
+
+    private string CardClass(Placement candidate)
+    {
+        List<string> classes = ["qh-card", "qh-cand-card"];
+        if (candidate.Key == _selected) classes.Add("qh-card-selected");
+        if (candidate.IsUnattributed) classes.Add("qh-card-unmapped");
+        else if (candidate.Place is CandidatePlace.NotRelevant or CandidatePlace.InEntry) classes.Add("qh-card-ignored");
+        return string.Join(' ', classes);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (_board is not null)
+            {
+                await _board.InvokeVoidAsync("dispose");
+                await _board.DisposeAsync();
+            }
+
+            if (_module is not null)
+            {
+                await _module.DisposeAsync();
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+            // The browser tab is already gone.
+        }
+
+        _self?.Dispose();
+    }
+}

@@ -1,0 +1,54 @@
+@* A manual entry to check before it's added, such as one drafted from unattributed commits. *@
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="3">
+            @if (Intro is { Length: > 0 })
+            {
+                <MudText Typo="Typo.body2" Class="qh-muted">@Intro</MudText>
+            }
+            <MudStack Row="true" Spacing="3">
+                <MudDatePicker @bind-Date="_date" Label="Day" Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="ddd d MMM" />
+                <MudTimePicker @bind-Time="_start" Label="Start (optional)" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" AmPm="false" />
+                <MudNumericField T="decimal" @bind-Value="_hours" Label="Hours" Variant="Variant.Outlined" Margin="Margin.Dense" Step="0.25m" Min="0.25m" Max="24m" Format="0.##" />
+            </MudStack>
+            <MudStack Row="true" Spacing="3">
+                <CategorySelect @bind-Value="Entry.CategoryId" Label="Category" />
+                <LocationSelect @bind-Value="Entry.Location" Label="Location" NullText="Day's location" />
+            </MudStack>
+            <MudTextField T="string" @bind-Value="Entry.Description" Label="Description" Variant="Variant.Outlined" Margin="Margin.Dense" Lines="2" AutoGrow="true" Immediate="true" />
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => Dialog.Cancel()">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="Entry.CategoryId is null || _hours <= 0 || _date is null" OnClick="Save">Add entry</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>The draft to edit; it is changed in place and returned on save.</summary>
+    [Parameter] public ManualEntry Entry { get; set; } = new();
+
+    [Parameter] public string? Intro { get; set; }
+
+    private DateTime? _date;
+    private TimeSpan? _start;
+    private decimal _hours;
+
+    protected override void OnInitialized()
+    {
+        _date = Entry.Date.ToDateTime(TimeOnly.MinValue);
+        _start = Entry.Start?.ToTimeSpan();
+        _hours = Entry.Minutes / 60m;
+    }
+
+    private void Save()
+    {
+        Entry.Date = DateOnly.FromDateTime(_date!.Value);
+        Entry.Start = _start is { } start ? TimeOnly.FromTimeSpan(start) : null;
+        Entry.Minutes = (int)Math.Round(_hours * 60);
+        Entry.Description = Entry.Description.Trim();
+        Dialog.Close(DialogResult.Ok(Entry));
+    }
+}

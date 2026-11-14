@@ -50,6 +50,40 @@ public sealed class BrowserTests(QuarterHourApp app)
     }
 
     [Test]
+    public async Task TheCommitsBoardIsOpenedWithoutAgentWork()
+    {
+        IPage page = await app.OpenPageAsync();
+        List<string> consoleErrors = [];
+        page.Console += (_, message) =>
+        {
+            if (message.Type == "error")
+            {
+                consoleErrors.Add(message.Text);
+            }
+        };
+
+        await page.GotoAsync("/mapping");
+        await page.WaitForInteractiveAsync();
+        await page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { NameRegex = new System.Text.RegularExpressions.Regex("Commits & PRs") }).ClickAsync();
+        await Assertions.Expect(page.Locator(".qh-board-candidates")).ToBeVisibleAsync();
+        await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+        bool crashed = await page.Locator("#blazor-error-ui").IsVisibleAsync();
+        string unattributed = await page.Locator(".qh-orphans .qh-col-head").InnerTextAsync();
+
+        ItShouldNotCrashTheCircuit();
+        ItShouldShowAnEmptyUnattributedColumn();
+        ItShouldNotLogErrorsInTheBrowser();
+
+        await page.Context.CloseAsync();
+
+        void ItShouldNotCrashTheCircuit() => crashed.ShouldBeFalse();
+
+        void ItShouldShowAnEmptyUnattributedColumn() => unattributed.ShouldContain("Unattributed (0)");
+
+        void ItShouldNotLogErrorsInTheBrowser() => consoleErrors.ShouldBeEmpty();
+    }
+
+    [Test]
     public async Task TheSampleCalendarIsImportedAndExported()
     {
         IPage page = await app.OpenPageAsync();
