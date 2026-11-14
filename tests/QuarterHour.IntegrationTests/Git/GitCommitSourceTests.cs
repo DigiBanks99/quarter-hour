@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using QuarterHour.Core.Model;
 using QuarterHour.Core.Sources;
 using QuarterHour.Infrastructure.Git;
@@ -64,51 +63,11 @@ public sealed class GitCommitSourceTests : IDisposable
     private static Task<CommitScanResult> Scan(ProjectFolders project, IReadOnlyList<string>? extraEmails = null) =>
         new GitCommitSource().ScanAsync(new CommitScanRequest(November, December, [project], extraEmails ?? []), CancellationToken.None);
 
-    private string Repository(string name)
-    {
-        string folder = _root.Folder(name);
-        Git(folder, "init", "-q", "-b", "main");
-        Git(folder, "config", "user.email", "me@example.com");
-        Git(folder, "config", "user.name", "Me");
-        Git(folder, "config", "commit.gpgsign", "false");
-        return folder;
-    }
+    private string Repository(string name) => TestGit.Repository(_root, name);
 
-    private static void Commit(string folder, string subject, string date, string email = "me@example.com") =>
-        Git(folder, new Dictionary<string, string>
-        {
-            ["GIT_AUTHOR_DATE"] = date,
-            ["GIT_COMMITTER_DATE"] = date,
-            ["GIT_AUTHOR_EMAIL"] = email,
-            ["GIT_COMMITTER_EMAIL"] = email,
-        }, "commit", "-q", "--allow-empty", "-m", subject);
+    private static void Commit(string folder, string subject, string date, string email = "me@example.com") => TestGit.Commit(folder, subject, date, email);
 
-    private static void Git(string folder, params string[] arguments) => Git(folder, [], arguments);
-
-    private static void Git(string folder, Dictionary<string, string> environment, params string[] arguments)
-    {
-        ProcessStartInfo start = new("git") { RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false };
-        start.ArgumentList.Add("-C");
-        start.ArgumentList.Add(folder);
-        foreach (string argument in arguments)
-        {
-            start.ArgumentList.Add(argument);
-        }
-
-        // Keep the developer's global hooks and templates out of the test repositories.
-        start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
-        start.Environment["GIT_CONFIG_GLOBAL"] = Path.Combine(Path.GetTempPath(), "quarter-hour-tests", "empty.gitconfig");
-        foreach ((string key, string value) in environment)
-        {
-            start.Environment[key] = value;
-        }
-
-        using Process process = Process.Start(start)!;
-        string error = process.StandardError.ReadToEnd();
-        process.StandardOutput.ReadToEnd();
-        process.WaitForExit();
-        process.ExitCode.ShouldBe(0, $"git {string.Join(' ', arguments)} failed: {error}");
-    }
+    private static void Git(string folder, params string[] arguments) => TestGit.Run(folder, arguments);
 
     public void Dispose() => _root.Dispose();
 }
