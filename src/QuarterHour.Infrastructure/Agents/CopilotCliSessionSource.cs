@@ -8,6 +8,7 @@ namespace QuarterHour.Infrastructure.Agents;
 /// <summary>
 /// GitHub Copilot CLI keeps each session in ~/.copilot/session-state/&lt;id&gt;/ with an events.jsonl log and a
 /// workspace.yaml (working folder, git root, repository, branch, name). Older versions wrote one &lt;id&gt;.jsonl file.
+/// Tool execution events (tool.execution_start's arguments, tool.execution_complete's result) hold the claims.
 /// </summary>
 public sealed class CopilotCliSessionSource : FileSessionSource
 {
@@ -56,6 +57,7 @@ public sealed class CopilotCliSessionSource : FileSessionSource
             : [];
 
         List<DateTimeOffset> timestamps = [];
+        List<Claim> claims = [];
         string? cwd = null;
         string? gitRoot = null;
         string? repository = null;
@@ -87,6 +89,10 @@ public sealed class CopilotCliSessionSource : FileSessionSource
                 && JsonLines.TryTimestamp(values!.GetValueOrDefault("timestamp"), out DateTimeOffset timestamp))
             {
                 timestamps.Add(timestamp);
+                if (type.StartsWith("tool.execution_", StringComparison.Ordinal))
+                {
+                    claims.AddRange(ClaimMatcher.Find(line.Span, timestamp));
+                }
             }
         }
 
@@ -105,6 +111,7 @@ public sealed class CopilotCliSessionSource : FileSessionSource
             Repository = workspace.GetValueOrDefault("repository") ?? repository,
             Branch = workspace.GetValueOrDefault("branch") ?? branch,
             Timestamps = timestamps,
+            Claims = claims,
         };
     }
 

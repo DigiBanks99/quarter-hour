@@ -10,6 +10,7 @@ namespace QuarterHour.Infrastructure.Agents;
 /// OpenCode 1.2 and later keep sessions in a SQLite database (opencode.db: session and message tables, times in
 /// milliseconds). Older versions wrote JSON files: storage/session/&lt;project&gt;/&lt;id&gt;.json and
 /// storage/message/&lt;session&gt;/&lt;id&gt;.json. Both are read; the database wins when a session is in both.
+/// Tool parts (the part table, or storage/part/&lt;message&gt;/&lt;id&gt;.json) hold the claims.
 /// </summary>
 public sealed class OpenCodeSessionSource : FileSessionSource
 {
@@ -112,6 +113,37 @@ public sealed class OpenCodeSessionSource : FileSessionSource
             }
         }
 
+        Dictionary<string, List<Claim>> claims = new(StringComparer.Ordinal);
+        HashSet<string> partColumns = Columns(connection, "part");
+        if (partColumns.Contains("session_id") && partColumns.Contains("time_created") && partColumns.Contains("data"))
+        {
+            using SqliteCommand command = connection.CreateCommand();
+            // The marker search runs inside SQLite, so only the few tool parts that might claim something are read.
+            command.CommandText = """
+                SELECT session_id, time_created, data FROM part
+                WHERE time_created >= $from AND time_created < $to AND instr(data, '"tool"') > 0
+                  AND (instr(data, '] ') > 0 OR instr(data, 'pullRequestId') > 0 OR instr(data, '/pullrequest/') > 0)
+                """;
+            command.Parameters.AddWithValue("$from", fromMs);
+            command.Parameters.AddWithValue("$to", toMs);
+            using SqliteDataReader reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                string sessionId = reader.GetString(0);
+                if (!details.ContainsKey(sessionId) || reader.IsDBNull(2) || !JsonLines.TryUnix(reader.GetInt64(1), out DateTimeOffset at))
+                {
+                    continue;
+                }
+
+                if (!claims.TryGetValue(sessionId, out List<Claim>? list))
+                {
+                    claims[sessionId] = list = [];
+                }
+
+                list.AddRange(ClaimMatcher.Find(reader.GetString(2), at));
+            }
+        }
+
         return timestamps.Select(pair => new AgentSession
         {
             Agent = "opencode",
@@ -119,6 +151,7 @@ public sealed class OpenCodeSessionSource : FileSessionSource
             Title = details[pair.Key].Title,
             ProjectPath = details[pair.Key].Directory,
             Timestamps = pair.Value,
+            Claims = claims.GetValueOrDefault(pair.Key) ?? [],
         }).ToList();
     }
 
@@ -152,6 +185,7 @@ public sealed class OpenCodeSessionSource : FileSessionSource
                 }
 
                 List<DateTimeOffset> timestamps = [];
+                List<Claim> claims = [];
                 foreach (string messageFile in SafeFiles(Path.Combine(storage, "message", id), "*.json", SearchOption.TopDirectoryOnly))
                 {
                     try
@@ -160,6 +194,7 @@ public sealed class OpenCodeSessionSource : FileSessionSource
                         if (long.TryParse(message.RootElement.Text("time", "created"), out long created) && JsonLines.TryUnix(created, out DateTimeOffset timestamp))
                         {
                             timestamps.Add(timestamp);
+                            claims.AddRange(PartClaims(storage, Path.GetFileNameWithoutExtension(messageFile), timestamp));
                         }
                     }
                     catch (Exception exception) when (exception is JsonException or IOException)
@@ -176,7 +211,36 @@ public sealed class OpenCodeSessionSource : FileSessionSource
                         Title = root.Text("title"),
                         ProjectPath = root.Text("directory"),
                         Timestamps = timestamps,
+                        Claims = claims,
                     };
+                }
+            }
+        }
+    }
+
+    // Storage files are pretty-printed, so look for the "tool" value alone rather than "type":"tool".
+    private static readonly byte[] ToolPart = "\"tool\""u8.ToArray();
+
+    /// <summary>Claims in a message's tool parts, read only when a cheap byte search says they might hold one.</summary>
+    private static IEnumerable<Claim> PartClaims(string storage, string messageId, DateTimeOffset at)
+    {
+        foreach (string partFile in SafeFiles(Path.Combine(storage, "part", messageId), "*.json", SearchOption.TopDirectoryOnly))
+        {
+            byte[] bytes;
+            try
+            {
+                bytes = File.ReadAllBytes(partFile);
+            }
+            catch (IOException)
+            {
+                continue;
+            }
+
+            if (bytes.AsSpan().IndexOf(ToolPart) >= 0)
+            {
+                foreach (Claim claim in ClaimMatcher.Find(bytes, at))
+                {
+                    yield return claim;
                 }
             }
         }
