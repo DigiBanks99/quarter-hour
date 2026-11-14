@@ -208,7 +208,7 @@ public sealed class WorkspaceService
             IReadOnlyDictionary<string, string> friendlyNames = config.FriendlyProjectNames();
             List<Activity> agentWork = [.. agents.Sessions.SelectMany(session => AgentActivities.ToActivities(session, idleGap, padding, timeZone, friendlyNames))];
             activities.AddRange(config.Agents.DescribeWithCommits
-                ? CommitAttribution.Attribute(agentWork, commits.Commits, idleGap, timeZone).Activities
+                ? CandidateAttribution.Attribute(agentWork, commits.Commits, idleGap, timeZone).Activities
                 : agentWork);
 
             PeriodTimesheet sheet = new TimesheetBuilder().Build(period, config, journal, activities, Today);

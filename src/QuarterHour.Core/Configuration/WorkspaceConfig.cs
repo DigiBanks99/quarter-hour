@@ -346,6 +346,9 @@ public sealed class AgentSettings
     /// <summary>Author emails besides each repository's own user.email, for commits made under another identity.</summary>
     public List<string> CommitEmails { get; set; } = [];
 
+    /// <summary>Describe agent blocks by the Azure DevOps pull requests created during them, read with the Azure CLI.</summary>
+    public bool DescribeWithPullRequests { get; set; } = true;
+
     public List<AgentScannerSettings> Scanners { get; set; } = [];
     public AgentsViewSettings AgentsView { get; set; } = new();
 }
@@ -358,12 +361,22 @@ public sealed class ProjectSettings
     /// <summary>The name timesheets use instead of the repository name, such as "Portal" for "portal-api".</summary>
     public string? FriendlyName { get; set; }
 
-    public bool IsEmpty => FriendlyName is null;
+    /// <summary>
+    /// Azure DevOps repository URLs searched for pull requests besides the project's own git remotes, such as the
+    /// upstream of a fork that isn't a remote or is named something else.
+    /// </summary>
+    public List<string> ExtraRemotes { get; set; } = [];
+
+    public bool IsEmpty => FriendlyName is null && ExtraRemotes.Count == 0;
 
     public ProjectSettings Normalize()
     {
         Key = Key.Trim().ToLowerInvariant();
         FriendlyName = string.IsNullOrWhiteSpace(FriendlyName) ? null : FriendlyName.Trim();
+        ExtraRemotes = [.. (ExtraRemotes ?? [])
+            .Where(remote => !string.IsNullOrWhiteSpace(remote))
+            .Select(remote => remote.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)];
         return this;
     }
 }

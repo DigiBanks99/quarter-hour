@@ -28,4 +28,27 @@ public sealed class ProjectSettingsTests
 
         void ItShouldLookUpFriendlyNamesByKey() => config.FriendlyProjectNames()["PORTAL-API"].ShouldBe("Portal");
     }
+
+    [Test]
+    public void AForkHasOnlyExtraRemotes()
+    {
+        WorkspaceConfig config = new()
+        {
+            Projects =
+            [
+                new ProjectSettings
+                {
+                    Key = "portal-fork",
+                    ExtraRemotes = [" https://dev.azure.com/contoso/Portal/_git/portal ", "", "https://dev.azure.com/contoso/Portal/_git/PORTAL"],
+                },
+            ],
+        };
+
+        config.Normalize();
+
+        ItShouldKeepTheProjectWithoutAFriendlyName();
+
+        void ItShouldKeepTheProjectWithoutAFriendlyName() =>
+            config.FindProject("portal-fork")!.ExtraRemotes.ShouldBe(["https://dev.azure.com/contoso/Portal/_git/portal"]);
+    }
 }
