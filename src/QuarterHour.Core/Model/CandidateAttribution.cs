@@ -10,7 +10,9 @@ public sealed record AttributionResult(IReadOnlyList<Activity> Activities, IRead
 /// block of the same project that was active when it was made, or that ended less than an idle gap before it (it was
 /// the block's last act). Of several such blocks, the one active at the time wins, else the one that ended most
 /// recently. A pull request first looks for blocks on its source branch, and takes the nearest of those at any distance.
-/// Candidates no block can take are orphans. Candidates only describe time; they never add or move it.
+/// A claim beats all of that: a block whose transcript shows it made the candidate takes it (the earliest claim, if
+/// several do). A pull request id only claims when it was seen around the pull request's creation, since later
+/// sessions list and review pull requests too. Candidates no block can take are orphans. Candidates only describe time; they never add or move it.
 /// </summary>
 public static class CandidateAttribution
 {
@@ -30,14 +32,16 @@ public static class CandidateAttribution
                      .OrderBy(commit => commit.AuthoredAt))
         {
             DateTime at = TimeZoneInfo.ConvertTime(commit.AuthoredAt, timeZone).DateTime;
-            Activity? block = Active(blocksByProject.GetValueOrDefault(commit.ProjectKey), at, idleGap);
+            List<Activity>? blocks = blocksByProject.GetValueOrDefault(commit.ProjectKey);
+            Activity? claimant = Claimant(blocks, claim => claim.Claims(commit));
+            Activity? block = claimant ?? Active(blocks, at, idleGap);
             if (block is null)
             {
                 orphans.Add(commit);
             }
             else
             {
-                Add(commitsByBlock, block.Id, commit);
+                Add(commitsByBlock, block.Id, commit with { Claimed = claimant is not null });
             }
         }
 
@@ -47,14 +51,16 @@ public static class CandidateAttribution
         {
             DateTime at = TimeZoneInfo.ConvertTime(pullRequest.CreatedAt, timeZone).DateTime;
             List<Activity>? blocks = blocksByProject.GetValueOrDefault(pullRequest.ProjectKey);
-            Activity? block = OnBranch(blocks, pullRequest.SourceBranch, at) ?? Active(blocks, at, idleGap);
+            Activity? claimant = Claimant(blocks, claim => claim.Claims(pullRequest)
+                && claim.At >= pullRequest.CreatedAt - PullRequestClaimLead && claim.At <= pullRequest.CreatedAt + PullRequestClaimWindow);
+            Activity? block = claimant ?? OnBranch(blocks, pullRequest.SourceBranch, at) ?? Active(blocks, at, idleGap);
             if (block is null)
             {
                 orphanPullRequests.Add(pullRequest);
             }
             else
             {
-                Add(pullRequestsByBlock, block.Id, pullRequest);
+                Add(pullRequestsByBlock, block.Id, pullRequest with { Claimed = claimant is not null });
             }
         }
 
@@ -69,6 +75,20 @@ public static class CandidateAttribution
             .ToList();
         return new AttributionResult(result, orphans, orphanPullRequests);
     }
+
+    /// <summary>How long after a pull request's creation its id still claims it; later mentions are reviews and lookups.</summary>
+    public static readonly TimeSpan PullRequestClaimWindow = TimeSpan.FromMinutes(30);
+
+    /// <summary>Slack for clocks: a claim may be stamped a little before Azure DevOps stamped the creation.</summary>
+    private static readonly TimeSpan PullRequestClaimLead = TimeSpan.FromMinutes(5);
+
+    private static Activity? Claimant(List<Activity>? blocks, Func<Claim, bool> claims) =>
+        blocks?
+            .Select(block => (Block: block, First: block.Claims.Where(claims).Select(claim => (DateTimeOffset?)claim.At).Min()))
+            .Where(candidate => candidate.First is not null)
+            .OrderBy(candidate => candidate.First)
+            .Select(candidate => candidate.Block)
+            .FirstOrDefault();
 
     private static Activity? Active(List<Activity>? blocks, DateTime at, TimeSpan idleGap) =>
         blocks?

@@ -48,6 +48,7 @@ public static class AgentActivities
         string project = friendlyNames?.GetValueOrDefault(projectKey) is { Length: > 0 } friendly ? friendly : repositoryName;
         string title = string.IsNullOrWhiteSpace(session.Title) ? project : session.Title.Trim();
         List<Activity> activities = new(blocks.Count);
+        List<(Claim Claim, DateTime At)> claims = session.Claims.Select(claim => (claim, TimeZoneInfo.ConvertTime(claim.At, timeZone).DateTime)).ToList();
         for (int index = 0; index < blocks.Count; index++)
         {
             (DateTime start, DateTime blockLast, int messages) = blocks[index];
@@ -74,10 +75,21 @@ public static class AgentActivities
                 Repository = session.Repository,
                 Branch = session.Branch,
                 MessageCount = messages,
+                Claims = claims
+                    .Where(claim => BlockOf(blocks, claim.At) == index)
+                    .Select(claim => claim.Claim)
+                    .ToList(),
             });
         }
 
         return activities;
+    }
+
+    /// <summary>The block a claim was made in: the one it falls inside, else the one it falls after (a claim is never earlier than its session).</summary>
+    private static int BlockOf(List<(DateTime Start, DateTime Last, int Count)> blocks, DateTime at)
+    {
+        int index = blocks.FindLastIndex(block => block.Start <= at);
+        return index < 0 ? 0 : index;
     }
 }
 

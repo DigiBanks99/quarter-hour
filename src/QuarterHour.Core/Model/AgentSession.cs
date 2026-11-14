@@ -19,4 +19,7 @@ public sealed record AgentSession
 
     /// <summary>Timestamps of the session's messages and tool calls.</summary>
     public required IReadOnlyList<DateTimeOffset> Timestamps { get; init; }
+
+    /// <summary>Commits and pull requests the session's tool output shows it made.</summary>
+    public IReadOnlyList<Claim> Claims { get; init; } = [];
 }

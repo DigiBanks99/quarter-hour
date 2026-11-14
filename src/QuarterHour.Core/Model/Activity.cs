@@ -65,6 +65,9 @@ public sealed record Activity
     /// <summary>Pull requests attributed to this block of agent work, which describe it before its commits.</summary>
     public IReadOnlyList<PullRequest> PullRequests { get; init; } = [];
 
+    /// <summary>Commits and pull requests this block's tool output shows it made, which it takes ahead of any other block.</summary>
+    public IReadOnlyList<Claim> Claims { get; init; } = [];
+
     // Manual
     public string? ManualCategoryId { get; init; }
     public string? ManualLocation { get; init; }

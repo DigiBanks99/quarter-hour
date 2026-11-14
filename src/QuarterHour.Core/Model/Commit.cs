@@ -15,6 +15,9 @@ public sealed record Commit
     public required string ProjectKey { get; init; }
 
     public string ShortSha => Sha.Length > 7 ? Sha[..7] : Sha;
+
+    /// <summary>Whether a block's transcript claimed it, rather than it being attributed by time.</summary>
+    public bool Claimed { get; init; }
 }
 
 /// <summary>Turns commit subjects into timesheet wording, and recognises commits that say nothing new about the work.</summary>
