@@ -5,12 +5,13 @@ using QuarterHour.Core.Time;
 using QuarterHour.Core.Timesheets;
 using QuarterHour.Infrastructure.Agents;
 using QuarterHour.Infrastructure.Calendar;
+using QuarterHour.Infrastructure.Git;
 using QuarterHour.Infrastructure.Storage;
 
 namespace QuarterHour.App.Services;
 
 /// <summary>
-/// The app's single source of truth: the configuration and journal, the cached calendar and agent scans per period,
+/// The app's single source of truth: the configuration and journal, the cached calendar, agent and commit scans per period,
 /// and the timesheets built from them. Pages edit through it and listen to <see cref="Changed"/>.
 /// </summary>
 public sealed class WorkspaceService
@@ -18,6 +19,7 @@ public sealed class WorkspaceService
     private readonly WorkspaceStore _store;
     private readonly CalendarCache _calendarCache;
     private readonly AgentSessionScanner _agentScanner;
+    private readonly ICommitSource _commits;
     private readonly GraphAuthService _graphAuth;
     private readonly IHttpClientFactory _httpClients;
     private readonly TimeProvider _time;
@@ -25,17 +27,19 @@ public sealed class WorkspaceService
     private readonly Lock _gate = new();
     private readonly SemaphoreSlim _buildLock = new(1, 1);
     private readonly Dictionary<string, AgentScanSummary> _agentScans = [];
+    private readonly Dictionary<string, CommitScanResult> _commitScans = [];
     private readonly Dictionary<string, PeriodTimesheet> _sheets = [];
     private WorkspaceConfig _config;
     private Journal _journal;
     private long _version;
 
-    public WorkspaceService(WorkspaceStore store, CalendarCache calendarCache, AgentSessionScanner agentScanner, GraphAuthService graphAuth,
-        IHttpClientFactory httpClients, TimeProvider time, ILogger<WorkspaceService> logger, IConfiguration configuration)
+    public WorkspaceService(WorkspaceStore store, CalendarCache calendarCache, AgentSessionScanner agentScanner, ICommitSource commits,
+        GraphAuthService graphAuth, IHttpClientFactory httpClients, TimeProvider time, ILogger<WorkspaceService> logger, IConfiguration configuration)
     {
         _store = store;
         _calendarCache = calendarCache;
         _agentScanner = agentScanner;
+        _commits = commits;
         _graphAuth = graphAuth;
         _httpClients = httpClients;
         _time = time;
@@ -175,6 +179,7 @@ public sealed class WorkspaceService
         try
         {
             AgentScanSummary agents = await AgentScanAsync(period, force: false, cancellationToken);
+            CommitScanResult commits = await CommitScanAsync(period, agents, force: false, cancellationToken);
             WorkspaceConfig config;
             Journal journal;
             long version;
@@ -201,7 +206,10 @@ public sealed class WorkspaceService
             TimeSpan idleGap = TimeSpan.FromMinutes(Math.Max(1, config.Agents.IdleGapMinutes));
             TimeSpan padding = TimeSpan.FromMinutes(Math.Max(0, config.Agents.PaddingMinutes));
             IReadOnlyDictionary<string, string> friendlyNames = config.FriendlyProjectNames();
-            activities.AddRange(agents.Sessions.SelectMany(session => AgentActivities.ToActivities(session, idleGap, padding, timeZone, friendlyNames)));
+            List<Activity> agentWork = [.. agents.Sessions.SelectMany(session => AgentActivities.ToActivities(session, idleGap, padding, timeZone, friendlyNames))];
+            activities.AddRange(config.Agents.DescribeWithCommits
+                ? CommitAttribution.Attribute(agentWork, commits.Commits, idleGap, timeZone).Activities
+                : agentWork);
 
             PeriodTimesheet sheet = new TimesheetBuilder().Build(period, config, journal, activities, Today);
             lock (_gate)
@@ -230,9 +238,19 @@ public sealed class WorkspaceService
         }
     }
 
+    /// <summary>The period's last commit scan, or null before the first timesheet build.</summary>
+    public CommitScanResult? LastCommitScan(TimesheetPeriod period)
+    {
+        lock (_gate)
+        {
+            return _commitScans.GetValueOrDefault(period.Key);
+        }
+    }
+
     public async Task<AgentScanSummary> RescanAgentsAsync(TimesheetPeriod period, CancellationToken cancellationToken = default)
     {
         AgentScanSummary summary = await AgentScanAsync(period, force: true, cancellationToken);
+        await CommitScanAsync(period, summary, force: true, cancellationToken);
         Invalidate();
         return summary;
     }
@@ -338,6 +356,61 @@ public sealed class WorkspaceService
         });
     }
 
+    /// <summary>Reads the commits in the projects the period's agent sessions worked in, once per period unless forced.</summary>
+    private async Task<CommitScanResult> CommitScanAsync(TimesheetPeriod period, AgentScanSummary agents, bool force, CancellationToken cancellationToken)
+    {
+        WorkspaceConfig config = ConfigSnapshot();
+        if (!config.Agents.DescribeWithCommits)
+        {
+            return CommitScanResult.Empty;
+        }
+
+        if (!force)
+        {
+            lock (_gate)
+            {
+                if (_commitScans.TryGetValue(period.Key, out CommitScanResult? cached))
+                {
+                    return cached;
+                }
+            }
+        }
+
+        return await Telemetry.TraceAsync("commit scan", async activity =>
+        {
+            activity?.SetTag("quarterhour.period", period.Key);
+            (DateTimeOffset from, DateTimeOffset to) = Range(period, config.General.ResolveTimeZone());
+            List<ProjectFolders> projects = agents.Sessions
+                .Where(session => !string.IsNullOrWhiteSpace(session.ProjectPath))
+                .GroupBy(session => ProjectNaming.Key(session.ProjectPath, session.Repository))
+                .Select(group => new ProjectFolders(group.Key, [.. group.Select(session => session.ProjectPath!).Distinct(StringComparer.OrdinalIgnoreCase)]))
+                .ToList();
+            CommitScanResult result;
+            try
+            {
+                result = await _commits.ScanAsync(new CommitScanRequest(from, to, projects, config.Agents.CommitEmails), cancellationToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                result = new CommitScanResult([], [], [exception.Message]);
+            }
+
+            foreach (string problem in result.Problems)
+            {
+                _logger.LogWarning("Commit scan: {Problem}", problem);
+            }
+
+            activity?.SetTag("quarterhour.commits.projects", projects.Count);
+            activity?.SetTag("quarterhour.commits.found", result.Commits.Count);
+            lock (_gate)
+            {
+                _commitScans[period.Key] = result;
+            }
+
+            return result;
+        });
+    }
+
     private void Invalidate()
     {
         lock (_gate)
@@ -362,6 +435,7 @@ public sealed class WorkspaceService
         lock (_gate)
         {
             _agentScans.Clear();
+            _commitScans.Clear();
         }
 
         Invalidate();
