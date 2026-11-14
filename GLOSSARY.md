@@ -49,7 +49,7 @@ Evidence in an agent session's transcript that the session itself made a particu
 _Avoid_: Proof, link, tag
 
 **Attribution**:
-The decision that a candidate describes a particular block's work. Claimed candidates are attributed to the claiming block; others by time.
+The decision that a candidate describes a particular block's work. Claimed candidates are attributed to the claiming block; others by time. The user may move a candidate to another block of its project, or mark it not relevant, and that choice wins.
 _Avoid_: Assignment, mapping (reserved for categories)
 
 **Orphan**:

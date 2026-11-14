@@ -154,5 +154,13 @@ public sealed record PeriodTimesheet
     public required IReadOnlyList<DaySummary> Days { get; init; }
     public required PeriodTotals Totals { get; init; }
 
+    /// <summary>The period's commits and pull requests and where each went, when agent work is described by them.</summary>
+    public IReadOnlyList<Placement> Candidates { get; init; } = [];
+
+    public IEnumerable<Placement> Unattributed => Candidates.Where(candidate => candidate.IsUnattributed);
+
+    /// <summary>The commits and pull requests describing a block of agent work.</summary>
+    public IEnumerable<Placement> CandidatesOf(string blockId) => Candidates.Where(candidate => candidate.BlockId == blockId);
+
     public DaySummary? Day(DateOnly date) => Days.FirstOrDefault(day => day.Date == date);
 }

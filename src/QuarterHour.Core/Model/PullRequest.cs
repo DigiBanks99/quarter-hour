@@ -16,6 +16,9 @@ public sealed record PullRequest
     /// <summary>The commits the pull request is made of, so a description doesn't repeat them after its title.</summary>
     public IReadOnlyList<string> CommitShas { get; init; } = [];
 
+    /// <summary>Where the pull request can be opened in a browser.</summary>
+    public string? Url { get; init; }
+
     /// <summary>Whether a block's transcript claimed it, rather than it being attributed by time.</summary>
     public bool Claimed { get; init; }
 
