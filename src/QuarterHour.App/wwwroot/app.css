@@ -37,6 +37,7 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: .85em; padd
 .qh-small { font-size: .8rem; }
 .qh-count { font-weight: 400; font-size: .9rem; margin-left: 4px; }
 .qh-warn-text b { color: var(--mud-palette-warning); }
+.qh-missing { color: var(--mud-palette-warning); }
 .qh-panel { background: var(--mud-palette-surface); border: 1px solid var(--qh-line); border-radius: var(--qh-radius); padding: 18px 20px; }
 .qh-panel-plain .mud-expand-panel, .qh-panel-plain { background: transparent; }
 .qh-panel-plain .mud-expand-panel { border: 1px solid var(--qh-line); border-radius: var(--qh-radius) !important; background: var(--mud-palette-surface); }

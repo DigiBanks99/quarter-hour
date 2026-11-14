@@ -61,6 +61,10 @@ else
                                 {
                                     <div>Not seen this period</div>
                                 }
+                                else if (_missing.Contains(row.Key))
+                                {
+                                    <div class="qh-missing">No git repository found here any more, so its work is described by session titles.</div>
+                                }
                             </td>
                             <td class="qh-muted">@string.Join(", ", row.Agents)</td>
                             <td class="qh-num">@(row.Raw > TimeSpan.Zero ? Ui.Duration(row.Raw) : "")</td>
@@ -74,6 +78,7 @@ else
 
 @code {
     private List<ProjectRow> _rows = [];
+    private HashSet<string> _missing = [];
 
     private sealed record ProjectRow(string Key, string RepositoryName, string? FriendlyName, IReadOnlyList<string> Folders,
         IReadOnlyList<string> Repositories, IReadOnlyList<string> Agents, TimeSpan Raw, bool Seen)
@@ -83,6 +88,7 @@ else
 
     protected override Task OnSheetLoadedAsync()
     {
+        _missing = [.. Workspace.LastCommitScan(UiState.Period)?.MissingProjects ?? []];
         List<ProjectRow> rows = [];
         foreach (IGrouping<string, ActivityResult> group in Sheet!.Activities
                      .Where(result => result.Activity.Source == ActivitySource.Agent)
