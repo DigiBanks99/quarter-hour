@@ -231,6 +231,23 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: .85em; padd
 .qh-linking .qh-links path, .qh-dragging .qh-links path { pointer-events: none; }
 .qh-linking, .qh-linking * { cursor: crosshair !important; user-select: none; }
 .qh-col { overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.qh-board-candidates { grid-template-columns: minmax(220px, .8fr) minmax(260px, 1fr) minmax(70px, 120px) minmax(280px, 1fr); }
+.qh-orphans { border-right: 1px dashed var(--qh-line); }
+.qh-col-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 600; font-size: .85rem; flex: none; }
+.qh-target-off { opacity: .3; }
+.qh-target-block .qh-target-name { white-space: normal; font-size: .82rem; line-height: 1.3; }
+.qh-target-block small { display: block; }
+.qh-cand-check { flex: none; margin: -6px 0 -6px -8px; }
+.qh-card-actions { margin: 2px 0 -6px -6px; }
+.qh-cand-mark { font-weight: 700; margin-right: 2px; }
+.qh-cand-details { white-space: pre-wrap; font-size: .76rem; margin: 6px 0 0; color: var(--mud-palette-text-secondary); font-family: inherit; max-height: 160px; overflow: auto; }
+.qh-cands { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; align-items: center; }
+.qh-cand { display: inline-flex; gap: 4px; align-items: baseline; max-width: 100%; font-size: .74rem; padding: 1px 8px; border-radius: 999px;
+    border: 1px solid var(--qh-line); background: var(--qh-softer); color: inherit; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+a.qh-cand:hover { border-color: var(--mud-palette-primary); }
+.qh-cand-claimed b, .qh-cand-moved b { color: var(--mud-palette-success); }
+.qh-cand-bytime { border-style: dashed; }
+.qh-cand-reassign { font-size: .74rem; }
 .qh-gap { pointer-events: none; }
 
 .qh-card { position: relative; background: var(--mud-palette-surface); border: 1px solid var(--qh-line); border-radius: 9px; padding: 9px 22px 9px 12px;
@@ -344,3 +361,4 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: .85em; padd
 #blazor-error-ui .dismiss { cursor: pointer; position: absolute; right: .75rem; top: .5rem; }
 .blazor-error-boundary { background: #b32121; padding: 1rem 1rem 1rem 3.7rem; color: white; }
 .blazor-error-boundary::after { content: "An error has occurred."; }
+.qh-orphans .qh-card-title { justify-content: flex-start; align-items: center; }

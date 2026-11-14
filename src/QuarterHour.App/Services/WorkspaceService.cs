@@ -153,6 +153,11 @@ public sealed class WorkspaceService
                 _journal.Lines.Remove(key);
             }
 
+            foreach (string key in _journal.Candidates.Where(pair => pair.Value.IsEmpty).Select(pair => pair.Key).ToList())
+            {
+                _journal.Candidates.Remove(key);
+            }
+
             _store.SaveJournal(_journal);
         }
 
@@ -211,11 +216,12 @@ public sealed class WorkspaceService
             TimeSpan padding = TimeSpan.FromMinutes(Math.Max(0, config.Agents.PaddingMinutes));
             IReadOnlyDictionary<string, string> friendlyNames = config.FriendlyProjectNames();
             List<Activity> agentWork = [.. agents.Sessions.SelectMany(session => AgentActivities.ToActivities(session, idleGap, padding, timeZone, friendlyNames))];
-            activities.AddRange(config.Agents.DescribeWithCommits || config.Agents.DescribeWithPullRequests
-                ? CandidateAttribution.Attribute(agentWork, commits.Commits, idleGap, timeZone, pullRequests?.Result.PullRequests).Activities
-                : agentWork);
+            AttributionResult? attribution = config.Agents.DescribeWithCommits || config.Agents.DescribeWithPullRequests
+                ? CandidateAttribution.Attribute(agentWork, commits.Commits, idleGap, timeZone, pullRequests?.Result.PullRequests, AttributionChoices.From(journal, friendlyNames))
+                : null;
+            activities.AddRange(attribution?.Activities ?? agentWork);
 
-            PeriodTimesheet sheet = new TimesheetBuilder().Build(period, config, journal, activities, Today);
+            PeriodTimesheet sheet = new TimesheetBuilder().Build(period, config, journal, activities, Today) with { Candidates = attribution?.Placements ?? [] };
             lock (_gate)
             {
                 if (version == _version)
