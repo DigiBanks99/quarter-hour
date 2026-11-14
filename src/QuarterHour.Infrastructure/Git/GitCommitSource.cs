@@ -79,7 +79,7 @@ public sealed class GitCommitSource : ICommitSource
             // --since filters on the committer date, which is never earlier than the author date, so nothing in range is lost.
             CommandResult log = await RunAsync(folder, cancellationToken, "log", "--all", "--reflog", "--no-merges",
                 "--since=" + request.From.ToString("o", CultureInfo.InvariantCulture),
-                "--format=%H%x1f%aI%x1f%ae%x1f%s%x1e");
+                "--format=%H%x1f%aI%x1f%ae%x1f%s%x1f%b%x1e");
             if (!log.Succeeded)
             {
                 // A repository without any commits yet has nothing to read.
@@ -109,7 +109,8 @@ public sealed class GitCommitSource : ICommitSource
                 continue;
             }
 
-            yield return (new Commit { Sha = fields[0], AuthoredAt = authored, Subject = fields[3], ProjectKey = projectKey }, fields[2]);
+            string? body = fields.Length > 4 && fields[4].Trim() is { Length: > 0 } text ? text.ReplaceLineEndings("\n") : null;
+            yield return (new Commit { Sha = fields[0], AuthoredAt = authored, Subject = fields[3], Body = body, ProjectKey = projectKey }, fields[2]);
         }
     }
 

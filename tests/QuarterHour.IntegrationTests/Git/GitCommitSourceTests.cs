@@ -34,6 +34,21 @@ public sealed class GitCommitSourceTests : IDisposable
     }
 
     [Test]
+    public async Task ACommitHasAMessageBody()
+    {
+        string repository = Repository("portal");
+        Commit(repository, "feat: add login\n\nUses the shared session cookie.\nCloses #12", "2026-11-09T09:30:00+02:00");
+
+        CommitScanResult result = await Scan(new ProjectFolders("portal", [repository]));
+
+        ItShouldKeepTheSubjectAndBodyApart();
+
+        void ItShouldKeepTheSubjectAndBodyApart() => result.Commits.Single().ShouldSatisfyAllConditions(
+            commit => commit.Subject.ShouldBe("feat: add login"),
+            commit => commit.Body.ShouldBe("Uses the shared session cookie.\nCloses #12"));
+    }
+
+    [Test]
     public async Task ABranchWasDeletedAfterASquashMerge()
     {
         string repository = Repository("portal");

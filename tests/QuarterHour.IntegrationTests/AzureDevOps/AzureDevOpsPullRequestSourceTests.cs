@@ -85,6 +85,7 @@ public sealed class AzureDevOpsPullRequestSourceTests : IDisposable
             pullRequest.ProjectKey.ShouldBe("portal-fork");
             pullRequest.SourceBranch.ShouldBe("feature/sso");
             pullRequest.CreatedAt.ShouldBe(new DateTimeOffset(2026, 11, 9, 7, 30, 0, TimeSpan.Zero));
+            pullRequest.Url.ShouldBe("https://dev.azure.com/contoso/Portal/_git/portal/pullrequest/482");
         }
 
         void ItShouldKnowThePullRequestsCommits() => result.PullRequests[0].CommitShas.Order().ShouldBe(new[] { first, second }.Order());
