@@ -59,6 +59,8 @@ public static class ActivityFields
         new("repository", "Repository", FieldType.Text, RuleScope.Agent),
         new("branch", "Git branch", FieldType.Text, RuleScope.Agent),
         new("messages", "Messages in block", FieldType.Number, RuleScope.Agent),
+        new("commits", "Commits", FieldType.Text, RuleScope.Agent, "Subjects of the block's commits, without conventional-commit prefixes"),
+        new("work", "Work done", FieldType.Text, RuleScope.Agent, "The block's commits, else the session's title"),
         new(GroupKey, "Group key (exact)", FieldType.Text, RuleScope.Any, "Used by mappings made on the board"),
     ];
 
@@ -94,6 +96,8 @@ public static class ActivityFields
         "repository" => FieldValue.OfText(activity.Repository),
         "branch" => FieldValue.OfText(activity.Branch),
         "messages" => FieldValue.OfNumber(activity.MessageCount),
+        "commits" => FieldValue.OfText(activity.Source == ActivitySource.Agent ? string.Join("; ", AgentWork.Commits(activity)) : null),
+        "work" => FieldValue.OfText(activity.Source == ActivitySource.Agent ? AgentWork.Describe(activity) : null),
         _ => FieldValue.OfText(null),
     };
 }

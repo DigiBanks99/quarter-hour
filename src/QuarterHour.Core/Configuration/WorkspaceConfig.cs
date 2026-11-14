@@ -86,6 +86,10 @@ public sealed class WorkspaceConfig
         }
 
         Agents.AgentsView ??= new AgentsViewSettings();
+        Agents.CommitEmails = [.. (Agents.CommitEmails ?? [])
+            .Where(email => !string.IsNullOrWhiteSpace(email))
+            .Select(email => email.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)];
         Projects = (Projects ?? [])
             .Where(project => project is not null && !string.IsNullOrWhiteSpace(project.Key))
             .Select(project => project.Normalize())
@@ -335,6 +339,12 @@ public sealed class AgentSettings
 
     /// <summary>Time added after the last message of a block, for reading and reviewing the result.</summary>
     public int PaddingMinutes { get; set; } = 5;
+
+    /// <summary>Describe agent blocks by the commits made during them, read from each project's git history.</summary>
+    public bool DescribeWithCommits { get; set; } = true;
+
+    /// <summary>Author emails besides each repository's own user.email, for commits made under another identity.</summary>
+    public List<string> CommitEmails { get; set; } = [];
 
     public List<AgentScannerSettings> Scanners { get; set; } = [];
     public AgentsViewSettings AgentsView { get; set; } = new();

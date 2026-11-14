@@ -1,6 +1,7 @@
 using QuarterHour.Core.Configuration;
 using QuarterHour.Core.Locations;
 using QuarterHour.Core.Model;
+using QuarterHour.Core.Rules;
 using QuarterHour.Core.Time;
 using QuarterHour.Core.Timesheets;
 
@@ -50,6 +51,39 @@ public sealed class TimesheetBuilderTests
         void ItShouldRoundUpToThreeAndAHalfHours() => line.Minutes.ShouldBe(210);
 
         void ItShouldDescribeTheWork() => line.Description.ShouldBe("portal: Fix login; Add tests");
+    }
+
+    [Test]
+    public void AgentWorkOnAProjectMadeCommits()
+    {
+        _config.Rules.Add(TestData.Direct("agent:portal", DefaultWorkspace.ClientDevelopment));
+
+        PeriodTimesheet sheet = Build(
+            TestData.AgentBlock("s1", "portal", At(Monday, 8), 60, title: "Fix login") with
+            {
+                Commits = [Commit("a1", "fix(auth): handle expired tokens"), Commit("a2", "test: cover token expiry")],
+            },
+            TestData.AgentBlock("s2", "portal", At(Monday, 13), 60, title: "Add tests"));
+
+        ItShouldDescribeTheBlockByItsCommits();
+
+        void ItShouldDescribeTheBlockByItsCommits() =>
+            sheet.Lines.Single().Description.ShouldBe("portal: Handle expired tokens; Cover token expiry; Add tests");
+    }
+
+    [Test]
+    public void AMappingDescribesAgentWorkWithATemplate()
+    {
+        Rule rule = TestData.Direct("agent:portal", DefaultWorkspace.ClientDevelopment);
+        rule.DescriptionTemplate = "{project} ({work})";
+        _config.Rules.Add(rule);
+
+        PeriodTimesheet sheet = Build(
+            TestData.AgentBlock("s1", "portal", At(Monday, 8), 60, title: "Fix login") with { Commits = [Commit("a1", "feat: add SSO login")] });
+
+        ItShouldFillInTheWorkDone();
+
+        void ItShouldFillInTheWorkDone() => sheet.Lines.Single().Description.ShouldBe("portal (Add SSO login)");
     }
 
     [Test]
@@ -378,6 +412,9 @@ public sealed class TimesheetBuilderTests
 
     private static Rule MeetingsAreClientMeetings() =>
         TestData.Heuristic("Client meetings", "title", ConditionOperator.StartsWith, "Client sync", DefaultWorkspace.ClientMeetings, scope: RuleScope.Calendar);
+
+    private static Commit Commit(string sha, string subject) =>
+        new() { Sha = sha, Subject = subject, AuthoredAt = DateTimeOffset.MinValue, ProjectKey = "portal" };
 
     private static DateTime At(DateOnly day, int hour) => day.ToDateTime(new TimeOnly(hour, 0));
 }
