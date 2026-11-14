@@ -136,6 +136,45 @@ public sealed class CandidateAttributionTests
     }
 
     [Test]
+    public void TwoSessionsWorkInTheRepositoryAtOnce()
+    {
+        Activity mine = TestData.AgentBlock("s1", "portal", Monday.AddHours(9), 60) with
+        {
+            Claims = [new Claim(ClaimKind.Commit, "a1b2c3d", Stamp(Monday.AddHours(9).AddMinutes(30)))],
+        };
+        Activity other = TestData.AgentBlock("s2", "portal", Monday.AddHours(9).AddMinutes(20), 60, agent: "pi");
+
+        AttributionResult result = Attribute([mine, other], Commit("a1b2c3d4e5f6", "portal", Monday.AddHours(9).AddMinutes(30)));
+
+        ItShouldGoToTheSessionThatMadeIt();
+        ItShouldSayItWasClaimed();
+
+        void ItShouldGoToTheSessionThatMadeIt() =>
+            result.Activities.Single(activity => activity.Commits.Count > 0).Id.ShouldBe(mine.Id);
+
+        void ItShouldSayItWasClaimed() => result.Activities.SelectMany(activity => activity.Commits).Single().Claimed.ShouldBeTrue();
+    }
+
+    [Test]
+    public void ALaterSessionListsAPullRequest()
+    {
+        Activity creator = TestData.AgentBlock("s1", "portal", Monday.AddHours(9), 60) with { Branch = "feature/sso" };
+        Activity reviewer = TestData.AgentBlock("s2", "portal", Monday.AddHours(15), 30, agent: "pi") with
+        {
+            Claims = [new Claim(ClaimKind.PullRequest, "482", Stamp(Monday.AddHours(15).AddMinutes(5)))],
+        };
+
+        AttributionResult result = AttributePullRequests([creator, reviewer], PullRequest(482, "portal", Monday.AddHours(9).AddMinutes(50), "feature/sso"));
+
+        ItShouldNotCountAsAClaim();
+
+        void ItShouldNotCountAsAClaim() =>
+            result.Activities.Single(activity => activity.PullRequests.Count > 0).ShouldSatisfyAllConditions(
+                activity => activity.Id.ShouldBe(creator.Id),
+                activity => activity.PullRequests.Single().Claimed.ShouldBeFalse());
+    }
+
+    [Test]
     [Arguments("feat(ui): follow the browser colour scheme", "Follow the browser colour scheme")]
     [Arguments("fix!: drop the old export", "Drop the old export")]
     [Arguments("Add SSO login", "Add SSO login")]
@@ -164,6 +203,8 @@ public sealed class CandidateAttributionTests
         SourceBranch = branch,
         CommitShas = commits ?? [],
     };
+
+    private static DateTimeOffset Stamp(DateTime at) => new(at, TimeSpan.Zero);
 
     private static Commit Commit(string sha, string project, DateTime at, string subject = "feat: add login") => new()
     {

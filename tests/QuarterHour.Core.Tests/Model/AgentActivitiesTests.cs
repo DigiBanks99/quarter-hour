@@ -39,6 +39,22 @@ public sealed class AgentActivitiesTests
     }
 
     [Test]
+    public void ASessionClaimedWorkInTwoBlocks()
+    {
+        AgentSession session = Session([0, 5, 50, 60]) with
+        {
+            Claims = [new Claim(ClaimKind.Commit, "1a2b3c4", SevenUtc.AddMinutes(5)), new Claim(ClaimKind.PullRequest, "482", SevenUtc.AddMinutes(60))],
+        };
+
+        IReadOnlyList<Activity> blocks = AgentActivities.ToActivities(session, TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(5), SouthAfrica);
+
+        ItShouldGiveEachBlockTheClaimsMadeInIt();
+
+        void ItShouldGiveEachBlockTheClaimsMadeInIt() =>
+            blocks.Select(block => block.Claims.Single().Value).ShouldBe(["1a2b3c4", "482"]);
+    }
+
+    [Test]
     public void ASessionHasNoMessages()
     {
         IReadOnlyList<Activity> blocks = AgentActivities.ToActivities(Session([]), TimeSpan.FromMinutes(15), TimeSpan.Zero, SouthAfrica);
