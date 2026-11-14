@@ -20,6 +20,7 @@ public sealed class WorkspaceService
     private readonly CalendarCache _calendarCache;
     private readonly AgentSessionScanner _agentScanner;
     private readonly ICommitSource _commits;
+    private readonly IPullRequestSource _pullRequests;
     private readonly GraphAuthService _graphAuth;
     private readonly IHttpClientFactory _httpClients;
     private readonly TimeProvider _time;
@@ -28,18 +29,20 @@ public sealed class WorkspaceService
     private readonly SemaphoreSlim _buildLock = new(1, 1);
     private readonly Dictionary<string, AgentScanSummary> _agentScans = [];
     private readonly Dictionary<string, CommitScanResult> _commitScans = [];
+    private readonly Dictionary<string, PullRequestScan> _pullRequestScans = [];
     private readonly Dictionary<string, PeriodTimesheet> _sheets = [];
     private WorkspaceConfig _config;
     private Journal _journal;
     private long _version;
 
     public WorkspaceService(WorkspaceStore store, CalendarCache calendarCache, AgentSessionScanner agentScanner, ICommitSource commits,
-        GraphAuthService graphAuth, IHttpClientFactory httpClients, TimeProvider time, ILogger<WorkspaceService> logger, IConfiguration configuration)
+        IPullRequestSource pullRequests, GraphAuthService graphAuth, IHttpClientFactory httpClients, TimeProvider time, ILogger<WorkspaceService> logger, IConfiguration configuration)
     {
         _store = store;
         _calendarCache = calendarCache;
         _agentScanner = agentScanner;
         _commits = commits;
+        _pullRequests = pullRequests;
         _graphAuth = graphAuth;
         _httpClients = httpClients;
         _time = time;
@@ -180,6 +183,7 @@ public sealed class WorkspaceService
         {
             AgentScanSummary agents = await AgentScanAsync(period, force: false, cancellationToken);
             CommitScanResult commits = await CommitScanAsync(period, agents, force: false, cancellationToken);
+            PullRequestScan? pullRequests = await PullRequestScanAsync(period, agents, force: false, cancellationToken);
             WorkspaceConfig config;
             Journal journal;
             long version;
@@ -207,8 +211,8 @@ public sealed class WorkspaceService
             TimeSpan padding = TimeSpan.FromMinutes(Math.Max(0, config.Agents.PaddingMinutes));
             IReadOnlyDictionary<string, string> friendlyNames = config.FriendlyProjectNames();
             List<Activity> agentWork = [.. agents.Sessions.SelectMany(session => AgentActivities.ToActivities(session, idleGap, padding, timeZone, friendlyNames))];
-            activities.AddRange(config.Agents.DescribeWithCommits
-                ? CandidateAttribution.Attribute(agentWork, commits.Commits, idleGap, timeZone).Activities
+            activities.AddRange(config.Agents.DescribeWithCommits || config.Agents.DescribeWithPullRequests
+                ? CandidateAttribution.Attribute(agentWork, commits.Commits, idleGap, timeZone, pullRequests?.Result.PullRequests).Activities
                 : agentWork);
 
             PeriodTimesheet sheet = new TimesheetBuilder().Build(period, config, journal, activities, Today);
@@ -247,10 +251,20 @@ public sealed class WorkspaceService
         }
     }
 
+    /// <summary>The period's last pull request scan and when it ran, or null before the first one.</summary>
+    public PullRequestScan? LastPullRequestScan(TimesheetPeriod period)
+    {
+        lock (_gate)
+        {
+            return _pullRequestScans.GetValueOrDefault(period.Key);
+        }
+    }
+
     public async Task<AgentScanSummary> RescanAgentsAsync(TimesheetPeriod period, CancellationToken cancellationToken = default)
     {
         AgentScanSummary summary = await AgentScanAsync(period, force: true, cancellationToken);
         await CommitScanAsync(period, summary, force: true, cancellationToken);
+        await PullRequestScanAsync(period, summary, force: true, cancellationToken);
         Invalidate();
         return summary;
     }
@@ -380,11 +394,7 @@ public sealed class WorkspaceService
         {
             activity?.SetTag("quarterhour.period", period.Key);
             (DateTimeOffset from, DateTimeOffset to) = Range(period, config.General.ResolveTimeZone());
-            List<ProjectFolders> projects = agents.Sessions
-                .Where(session => !string.IsNullOrWhiteSpace(session.ProjectPath))
-                .GroupBy(session => ProjectNaming.Key(session.ProjectPath, session.Repository))
-                .Select(group => new ProjectFolders(group.Key, [.. group.Select(session => session.ProjectPath!).Distinct(StringComparer.OrdinalIgnoreCase)]))
-                .ToList();
+            List<ProjectFolders> projects = ProjectFoldersOf(agents, config);
             CommitScanResult result;
             try
             {
@@ -409,6 +419,85 @@ public sealed class WorkspaceService
 
             return result;
         });
+    }
+
+    public static readonly TimeSpan PullRequestScanLifetime = TimeSpan.FromMinutes(15);
+
+    /// <summary>
+    /// Reads the pull requests created in the projects the period's agent sessions worked in. Azure DevOps is slow to
+    /// ask, so an answer is kept for <see cref="PullRequestScanLifetime"/> unless forced.
+    /// </summary>
+    private async Task<PullRequestScan?> PullRequestScanAsync(TimesheetPeriod period, AgentScanSummary agents, bool force, CancellationToken cancellationToken)
+    {
+        WorkspaceConfig config = ConfigSnapshot();
+        if (!config.Agents.DescribeWithPullRequests)
+        {
+            return null;
+        }
+
+        if (!force)
+        {
+            lock (_gate)
+            {
+                if (_pullRequestScans.TryGetValue(period.Key, out PullRequestScan? cached) && _time.GetUtcNow() - cached.At < PullRequestScanLifetime)
+                {
+                    return cached;
+                }
+            }
+        }
+
+        return await Telemetry.TraceAsync("pull request scan", async activity =>
+        {
+            activity?.SetTag("quarterhour.period", period.Key);
+            (DateTimeOffset from, DateTimeOffset to) = Range(period, config.General.ResolveTimeZone());
+            List<ProjectFolders> projects = ProjectFoldersOf(agents, config);
+            PullRequestScanResult result;
+            try
+            {
+                result = await _pullRequests.ScanAsync(new PullRequestScanRequest(from, to, projects), cancellationToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                result = PullRequestScanResult.Failed(exception.Message);
+            }
+
+            foreach (string problem in result.Problems)
+            {
+                _logger.LogWarning("Pull request scan: {Problem}", problem);
+            }
+
+            activity?.SetTag("quarterhour.pullrequests.repositories", result.Repositories.Values.Sum(list => list.Count));
+            activity?.SetTag("quarterhour.pullrequests.found", result.PullRequests.Count);
+            PullRequestScan scan = new(result, _time.GetUtcNow());
+            lock (_gate)
+            {
+                _pullRequestScans[period.Key] = scan;
+            }
+
+            return scan;
+        });
+    }
+
+    /// <summary>The folders each project was worked in this period, with its configured extra remotes.</summary>
+    private static List<ProjectFolders> ProjectFoldersOf(AgentScanSummary agents, WorkspaceConfig config) =>
+        agents.Sessions
+            .Where(session => !string.IsNullOrWhiteSpace(session.ProjectPath))
+            .GroupBy(session => ProjectNaming.Key(session.ProjectPath, session.Repository))
+            .Select(group => new ProjectFolders(
+                group.Key,
+                [.. group.Select(session => session.ProjectPath!).Distinct(StringComparer.OrdinalIgnoreCase)],
+                config.FindProject(group.Key)?.ExtraRemotes))
+            .ToList();
+
+    /// <summary>Forgets pull request scans, so the next build asks Azure DevOps again (after a project's remotes change).</summary>
+    public void ForgetPullRequestScans()
+    {
+        lock (_gate)
+        {
+            _pullRequestScans.Clear();
+        }
+
+        Invalidate();
     }
 
     private void Invalidate()
@@ -436,8 +525,12 @@ public sealed class WorkspaceService
         {
             _agentScans.Clear();
             _commitScans.Clear();
+            _pullRequestScans.Clear();
         }
 
         Invalidate();
     }
 }
+
+/// <summary>A pull request scan and when it ran, so it can be reused for a while.</summary>
+public sealed record PullRequestScan(PullRequestScanResult Result, DateTimeOffset At);

@@ -8,6 +8,7 @@ using QuarterHour.Core.Timesheets;
 using QuarterHour.Infrastructure.Agents;
 using QuarterHour.Infrastructure.Calendar;
 using QuarterHour.Infrastructure.Export;
+using QuarterHour.Infrastructure.AzureDevOps;
 using QuarterHour.Infrastructure.Git;
 using QuarterHour.Infrastructure.Storage;
 
@@ -38,6 +39,7 @@ public static class QuarterHourSetup
             new AgentsViewSessionSource(provider.GetRequiredService<IHttpClientFactory>().CreateClient(AgentsViewClient)));
         services.AddSingleton<AgentSessionScanner>();
         services.AddSingleton<ICommitSource>(_ => new GitCommitSource());
+        services.AddSingleton<IPullRequestSource>(_ => new AzureDevOpsPullRequestSource());
 
         services.AddSingleton<WorkspaceService>();
         services.AddScoped<UiState>();

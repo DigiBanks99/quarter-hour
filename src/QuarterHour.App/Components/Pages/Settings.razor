@@ -131,12 +131,27 @@
                     <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Sync" Class="mt-3" Disabled="_busy" OnClick="RescanAsync">Rescan @UiState.Period.Name</MudButton>
                 </MudPaper>
                 <MudPaper Class="qh-panel mt-3" Elevation="0">
-                    <MudText Typo="Typo.h6" Class="mb-1">Commits</MudText>
-                    <MudText Typo="Typo.body2" Class="qh-muted mb-2">Describe agent work by the commits made during it, read from each project's git history.</MudText>
+                    <MudText Typo="Typo.h6" Class="mb-1">Commits &amp; pull requests</MudText>
+                    <MudText Typo="Typo.body2" Class="qh-muted mb-2">Describe agent work by the pull requests and commits made during it, read from each project's git history and Azure DevOps.</MudText>
                     <MudSwitch T="bool" Value="Config.Agents.DescribeWithCommits" ValueChanged="value => SaveAgents(config => config.Agents.DescribeWithCommits = value)" Color="Color.Primary" Label="Describe with commits" />
                     <MudTextField T="string" Value="@string.Join("; ", Config.Agents.CommitEmails)" ValueChanged="SetCommitEmails" Label="Also my commits as"
                                   HelperText="Emails besides each repository's user.email, separated by ;" Variant="Variant.Outlined" Margin="Margin.Dense"
                                   Disabled="!Config.Agents.DescribeWithCommits" />
+                    <MudSwitch T="bool" Value="Config.Agents.DescribeWithPullRequests" ValueChanged="value => SaveAgents(config => config.Agents.DescribeWithPullRequests = value)" Color="Color.Primary"
+                               Label="Describe with Azure DevOps pull requests" Class="mt-2" />
+                    <MudText Typo="Typo.caption" Class="qh-muted d-block">Needs the Azure CLI with the azure-devops extension, signed in with <code>az login</code>. Projects can add more remotes on the Projects page.</MudText>
+                    @if (Config.Agents.DescribeWithPullRequests && Workspace.LastPullRequestScan(UiState.Period) is { } pullRequests)
+                    {
+                        int repositories = pullRequests.Result.Repositories.Values.Sum(list => list.Count);
+                        <MudText Typo="Typo.body2" Class="mt-2" data-testid="pull-request-status">
+                            @Ui.Plural(pullRequests.Result.PullRequests.Count, "pull request") this period from @Ui.Plural(repositories, "Azure DevOps repository", "Azure DevOps repositories"),
+                            checked at @TimeZoneInfo.ConvertTime(pullRequests.At, Workspace.TimeZone).ToString("HH:mm"). Rescan to check again.
+                        </MudText>
+                        @foreach (string problem in pullRequests.Result.Problems)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Warning" Class="d-block">@problem</MudText>
+                        }
+                    }
                 </MudPaper>
                 <MudPaper Class="qh-panel mt-3" Elevation="0">
                     <MudText Typo="Typo.h6" Class="mb-1">AgentsView</MudText>
