@@ -59,6 +59,9 @@ public sealed record Activity
     public string? Branch { get; init; }
     public int MessageCount { get; init; }
 
+    /// <summary>The commits attributed to this block of agent work, oldest first.</summary>
+    public IReadOnlyList<Commit> Commits { get; init; } = [];
+
     // Manual
     public string? ManualCategoryId { get; init; }
     public string? ManualLocation { get; init; }

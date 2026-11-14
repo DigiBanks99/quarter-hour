@@ -327,7 +327,7 @@ public sealed class TimesheetBuilder
             }
         }
 
-        return piece.Activity.Title;
+        return piece.Activity.Source == ActivitySource.Agent ? AgentWork.Describe(piece.Activity) : piece.Activity.Title;
     }
 
     private static List<TimesheetLine> BuildLines(List<Piece> pieces, RoundingSettings rounding, string sentiment)
@@ -392,7 +392,8 @@ public sealed class TimesheetBuilder
     }
 
     /// <summary>
-    /// One line per workstream, like the Timesheet system's own rows: "portal: Fix login; Add tests".
+    /// One line per workstream, like the Timesheet system's own rows: "portal: Fix login; Add tests", where each part is
+    /// a block's commit subjects or, without commits, its session's title.
     /// Activities whose mapping has a description template keep their rendered description as its own line.
     /// </summary>
     private static string CombinedDescription(List<Piece> group)
@@ -412,7 +413,7 @@ public sealed class TimesheetBuilder
                      .GroupBy(piece => piece.Activity.GroupLabel))
         {
             List<string> titles = project
-                .Select(piece => piece.Description)
+                .SelectMany(piece => AgentWork.Parts(piece.Activity))
                 .Where(title => !string.Equals(title, project.Key, StringComparison.OrdinalIgnoreCase))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
