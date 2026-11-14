@@ -121,6 +121,15 @@
                 Snackbar.Add(problem, Severity.Warning);
             }
 
+            if (Workspace.LastPullRequestScan(period) is { } pullRequests && pullRequests.Result.Repositories.Count > 0)
+            {
+                messages.Add(Ui.Plural(pullRequests.Result.PullRequests.Count, "pull request"));
+                foreach (string problem in pullRequests.Result.Problems.Take(2))
+                {
+                    Snackbar.Add($"Pull requests: {problem}", Severity.Warning);
+                }
+            }
+
             Snackbar.Add($"Synced {period.Name}: {string.Join(", ", messages)}.", Severity.Success);
         }
         finally

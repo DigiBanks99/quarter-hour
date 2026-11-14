@@ -29,7 +29,7 @@ else
         {
             <table class="qh-table qh-projects">
                 <thead>
-                    <tr><th>Repository</th><th>Friendly name</th><th>Folders</th><th>Agents</th><th class="qh-num">This period</th></tr>
+                    <tr><th>Repository</th><th>Friendly name</th><th>Folders</th><th>Pull requests from</th><th>Agents</th><th class="qh-num">This period</th></tr>
                 </thead>
                 <tbody>
                     @foreach (ProjectRow row in _rows)
@@ -66,6 +66,16 @@ else
                                     <div class="qh-missing">No git repository found here any more, so its work is described by session titles.</div>
                                 }
                             </td>
+                            <td>
+                                @foreach (string repository in _searched.GetValueOrDefault(row.Key) ?? [])
+                                {
+                                    <div class="qh-muted">@repository</div>
+                                }
+                                <MudTextField T="string" Value="@string.Join("; ", Config.FindProject(row.Key)?.ExtraRemotes ?? [])" ValueChanged="value => SetExtraRemotes(row, value)"
+                                              Variant="Variant.Text" Margin="Margin.Dense" DebounceInterval="800" Placeholder="Extra remotes"
+                                              HelperText="Azure DevOps repository URLs besides its git remotes, such as a fork's upstream; separate with ;"
+                                              aria-label="@($"Extra remotes for {row.RepositoryName}")" />
+                            </td>
                             <td class="qh-muted">@string.Join(", ", row.Agents)</td>
                             <td class="qh-num">@(row.Raw > TimeSpan.Zero ? Ui.Duration(row.Raw) : "")</td>
                         </tr>
@@ -79,6 +89,7 @@ else
 @code {
     private List<ProjectRow> _rows = [];
     private HashSet<string> _missing = [];
+    private IReadOnlyDictionary<string, IReadOnlyList<string>> _searched = new Dictionary<string, IReadOnlyList<string>>();
 
     private sealed record ProjectRow(string Key, string RepositoryName, string? FriendlyName, IReadOnlyList<string> Folders,
         IReadOnlyList<string> Repositories, IReadOnlyList<string> Agents, TimeSpan Raw, bool Seen)
@@ -89,6 +100,7 @@ else
     protected override Task OnSheetLoadedAsync()
     {
         _missing = [.. Workspace.LastCommitScan(UiState.Period)?.MissingProjects ?? []];
+        _searched = Workspace.LastPullRequestScan(UiState.Period)?.Result.Repositories ?? new Dictionary<string, IReadOnlyList<string>>();
         List<ProjectRow> rows = [];
         foreach (IGrouping<string, ActivityResult> group in Sheet!.Activities
                      .Where(result => result.Activity.Source == ActivitySource.Agent)
@@ -121,6 +133,28 @@ else
             .ThenBy(row => row.RepositoryName, StringComparer.OrdinalIgnoreCase)
             .ToList();
         return Task.CompletedTask;
+    }
+
+    private void SetExtraRemotes(ProjectRow row, string? text)
+    {
+        List<string> remotes = [.. (text ?? "").Split([';', ',', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+        if (remotes.SequenceEqual(Config.FindProject(row.Key)?.ExtraRemotes ?? [], StringComparer.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        Workspace.UpdateConfig(config =>
+        {
+            ProjectSettings? project = config.FindProject(row.Key);
+            if (project is null)
+            {
+                project = new ProjectSettings { Key = row.Key };
+                config.Projects.Add(project);
+            }
+
+            project.ExtraRemotes = remotes;
+        });
+        Workspace.ForgetPullRequestScans();
     }
 
     private void Rename(ProjectRow row, string? value)
