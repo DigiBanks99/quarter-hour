@@ -39,6 +39,10 @@ public sealed partial record AzureDevOpsRepository(string OrganizationUrl, strin
 
     public override string ToString() => $"{Organization}/{Project}/{Name}";
 
+    /// <summary>"https://dev.azure.com/contoso/Portal/_git/portal/pullrequest/482".</summary>
+    public string PullRequestUrl(int id) =>
+        $"{OrganizationUrl.TrimEnd('/')}/{Uri.EscapeDataString(Project)}/_git/{Uri.EscapeDataString(Name)}/pullrequest/{id}";
+
     public bool SameAs(AzureDevOpsRepository other) =>
         string.Equals(Organization, other.Organization, StringComparison.OrdinalIgnoreCase)
         && string.Equals(Project, other.Project, StringComparison.OrdinalIgnoreCase)

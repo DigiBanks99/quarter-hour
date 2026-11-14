@@ -122,6 +122,7 @@ public sealed class AzureDevOpsPullRequestSource : IPullRequestSource
                 CreatedAt = pullRequest.CreatedAt,
                 ProjectKey = owner.Key,
                 SourceBranch = pullRequest.SourceBranch,
+                Url = pullRequest.Repository.PullRequestUrl(pullRequest.Id),
                 CommitShas = await CommitsAsync(owner.Value.Folders, pullRequest, cancellationToken),
             });
         }
