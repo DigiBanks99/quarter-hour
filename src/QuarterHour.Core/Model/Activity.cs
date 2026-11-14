@@ -62,6 +62,9 @@ public sealed record Activity
     /// <summary>The commits attributed to this block of agent work, oldest first.</summary>
     public IReadOnlyList<Commit> Commits { get; init; } = [];
 
+    /// <summary>Pull requests attributed to this block of agent work, which describe it before its commits.</summary>
+    public IReadOnlyList<PullRequest> PullRequests { get; init; } = [];
+
     // Manual
     public string? ManualCategoryId { get; init; }
     public string? ManualLocation { get; init; }

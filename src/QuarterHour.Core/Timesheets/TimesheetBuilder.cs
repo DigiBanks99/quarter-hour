@@ -393,7 +393,7 @@ public sealed class TimesheetBuilder
 
     /// <summary>
     /// One line per workstream, like the Timesheet system's own rows: "portal: Fix login; Add tests", where each part is
-    /// a block's commit subjects or, without commits, its session's title.
+    /// a block's pull request titles and commit subjects or, without either, its session's title.
     /// Activities whose mapping has a description template keep their rendered description as its own line.
     /// </summary>
     private static string CombinedDescription(List<Piece> group)

@@ -72,6 +72,24 @@ public sealed class TimesheetBuilderTests
     }
 
     [Test]
+    public void AgentWorkOnAProjectRaisedAPullRequest()
+    {
+        _config.Rules.Add(TestData.Direct("agent:portal", DefaultWorkspace.ClientDevelopment));
+
+        PeriodTimesheet sheet = Build(
+            TestData.AgentBlock("s1", "portal", At(Monday, 8), 60, title: "SSO") with
+            {
+                Commits = [Commit("a1", "feat: add sso login"), Commit("a2", "fix: login redirect")],
+                PullRequests = [new PullRequest { Id = 482, Title = "Add SSO login", CreatedAt = DateTimeOffset.MinValue, ProjectKey = "portal", CommitShas = ["a1"] }],
+            });
+
+        ItShouldNameThePullRequestBeforeTheRemainingCommits();
+
+        void ItShouldNameThePullRequestBeforeTheRemainingCommits() =>
+            sheet.Lines.Single().Description.ShouldBe("portal: Add SSO login (PR 482); Login redirect");
+    }
+
+    [Test]
     public void AMappingDescribesAgentWorkWithATemplate()
     {
         Rule rule = TestData.Direct("agent:portal", DefaultWorkspace.ClientDevelopment);
