@@ -81,11 +81,72 @@ public sealed class TopUpAndLineOverrideTests
             TestData.AgentBlock("s2", "portal", At(Monday, 11), 30, title: "Fix filters"),
             TestData.AgentBlock("s3", "proposals", At(Monday, 13), 45, title: "Tune the prompts"));
 
-        string description = sheet.Lines.Single().Description;
+        ItShouldWriteALinePerProject();
+        ItShouldShareTheDaysRoundedTimeBetweenThem();
 
-        ItShouldWriteAWorkstreamPerLine();
+        void ItShouldWriteALinePerProject() =>
+            sheet.Lines.Select(line => line.Description).ShouldBe(["portal: Wire up search; Fix filters", "proposals: Tune the prompts"]);
 
-        void ItShouldWriteAWorkstreamPerLine() => description.ShouldBe("portal: Wire up search; Fix filters\nproposals: Tune the prompts");
+        void ItShouldShareTheDaysRoundedTimeBetweenThem() => sheet.Lines.Select(line => line.Minutes).ShouldBe([90, 45]);
+    }
+
+    [Test]
+    public void AProjectsWorkOutgrowsTheDescriptionLimit()
+    {
+        Activity[] blocks = Enumerable.Range(0, 12)
+            .Select(index => TestData.AgentBlock($"s{index}", "portal", At(Monday, 8).AddMinutes(index * 30), 20, title: $"Session {index:00} " + new string('x', 40)))
+            .ToArray();
+
+        PeriodTimesheet sheet = Build(blocks);
+
+        ItShouldSplitTheLineAgain();
+        ItShouldKeepEveryDescriptionWithinTheLimit();
+        ItShouldNameTheProjectOnEveryLine();
+        ItShouldSayEverythingOnce();
+        ItShouldLogTheSameTimeAsOneLineWould();
+        ItShouldGiveEveryLineItsOwnId();
+
+        void ItShouldSplitTheLineAgain() => sheet.Lines.Count.ShouldBe(3);
+
+        void ItShouldKeepEveryDescriptionWithinTheLimit() =>
+            sheet.Lines.ShouldAllBe(line => line.Description.Length <= TimesheetLine.MaxDescriptionLength);
+
+        void ItShouldNameTheProjectOnEveryLine() => sheet.Lines.ShouldAllBe(line => line.Description.StartsWith("portal: "));
+
+        void ItShouldSayEverythingOnce() =>
+            sheet.Lines.SelectMany(line => line.Description["portal: ".Length..].Split("; ")).ShouldBe(blocks.Select(block => block.Title));
+
+        void ItShouldLogTheSameTimeAsOneLineWould() => sheet.Lines.Select(line => line.Minutes).ShouldBe([90, 75, 75]);
+
+        void ItShouldGiveEveryLineItsOwnId() => sheet.Lines.Select(line => line.Id).Distinct().Count().ShouldBe(3);
+    }
+
+    [Test]
+    public void ThreeProjectsAreWorkedOnForAnHourAQuarterAndAHalf()
+    {
+        _config.Rules.Add(TestData.Direct("agent:todos", DefaultWorkspace.ClientAnalysis));
+
+        PeriodTimesheet sheet = Build(
+            TestData.AgentBlock("s1", "todos", At(Monday, 9), 60, title: "Add due dates"),
+            TestData.AgentBlock("s2", "portal", At(Monday, 11), 15, title: "Fix filters"),
+            TestData.AgentBlock("s3", "proposals", At(Monday, 13), 30, title: "Tune the prompts"));
+
+        ItShouldLogEachProjectForTheTimeItTook();
+
+        void ItShouldLogEachProjectForTheTimeItTook() => sheet.Lines.Select(line => line.Minutes).ShouldBe([60, 15, 30]);
+    }
+
+    [Test]
+    public void ASmallProjectSharesADayWithABigOne()
+    {
+        PeriodTimesheet sheet = Build(
+            TestData.AgentBlock("s1", "portal", At(Monday, 9), 230, title: "Wire up search"),
+            TestData.AgentBlock("s2", "proposals", At(Monday, 14), 4, title: "Tune the prompts"));
+
+        ItShouldStillLogTheSmallProject();
+
+        void ItShouldStillLogTheSmallProject() => sheet.Lines.Select(line => (line.Description, line.Minutes))
+            .ShouldBe([("portal: Wire up search", 225), ("proposals: Tune the prompts", 15)]);
     }
 
     [Test]

@@ -262,7 +262,7 @@ else
                                 </table>
                             </div>
                             <MudText Typo="Typo.caption" Class="qh-muted">
-                                Meetings are rounded one by one; agent work is added up per category and location for the day, then rounded@(Config.Targets.TopUpCategoryId is null ? "" : ", then the day is topped up").
+                                Meetings are rounded one by one; agent work is added up per category and location for the day, rounded, and written as a line per project (more when a description passes @TimesheetLine.MaxDescriptionLength characters)@(Config.Targets.TopUpCategoryId is null ? "" : ", then the day is topped up").
                                 Edits here change only this line of the export.
                             </MudText>
                         }
