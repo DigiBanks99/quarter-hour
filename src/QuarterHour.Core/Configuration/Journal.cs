@@ -75,7 +75,13 @@ public sealed class ActivityOverride
     /// <summary>Replaces the measured minutes (before rounding).</summary>
     public int? Minutes { get; set; }
 
-    public bool IsEmpty => Excluded is null && CategoryId is null && Location is null && Description is null && Minutes is null;
+    /// <summary>
+    /// The timesheet entry the user grouped this block of agent work into, split off its day's line. Blocks sharing an
+    /// entry are logged together, as their own line, rounded on their own.
+    /// </summary>
+    public string? Entry { get; set; }
+
+    public bool IsEmpty => Excluded is null && CategoryId is null && Location is null && Description is null && Minutes is null && Entry is null;
 }
 
 public sealed class DayOverride

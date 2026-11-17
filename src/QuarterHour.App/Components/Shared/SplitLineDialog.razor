@@ -1,0 +1,74 @@
+@inject WorkspaceService Workspace
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Split into entries</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="qh-muted mb-3">
+            Tick the work that belongs together. It becomes an entry of its own, rounded on its own; the rest stays on this line.
+        </MudText>
+        <table class="qh-table">
+            <thead>
+                <tr><th></th><th>Time</th><th>Work</th><th class="qh-num">Counted</th></tr>
+            </thead>
+            <tbody>
+                @foreach (ActivityResult item in Items)
+                {
+                    <tr @onclick="() => Toggle(item.PieceId)" style="cursor:pointer">
+                        <td><MudCheckBox T="bool" Value="@_ticked.Contains(item.PieceId)" ValueChanged="_ => Toggle(item.PieceId)" Size="Size.Small" Dense="true" /></td>
+                        <td class="qh-nowrap">@(item.Activity.IsTimed ? $"{Ui.Time(item.Start)}–{Ui.Time(item.End)}" : "—")</td>
+                        <td>
+                            <div class="qh-act-title"><MudIcon Icon="@Ui.SourceIcon(item.Activity.Source)" Size="Size.Small" /> @item.Description</div>
+                            <div class="qh-act-meta">@string.Join(" · ", new[] { item.Activity.GroupLabel, item.Activity.Branch }.Where(part => !string.IsNullOrWhiteSpace(part)))</div>
+                        </td>
+                        <td class="qh-num qh-nowrap">@Ui.Duration(item.Counted)</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <MudText Typo="Typo.caption" Class="qh-muted">
+            Ticked: @Ui.Duration(Ticked.Aggregate(TimeSpan.Zero, (total, item) => total + item.Counted)) of @Ui.Duration(Items.Aggregate(TimeSpan.Zero, (total, item) => total + item.Counted)) measured.
+        </MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => Dialog.Cancel()">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="_ticked.Count == 0 || _ticked.Count == Items.Count" OnClick="Save">Make an entry</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    /// <summary>The activities behind the line being split.</summary>
+    [Parameter] public IReadOnlyList<ActivityResult> Items { get; set; } = [];
+
+    private readonly HashSet<string> _ticked = new(StringComparer.Ordinal);
+
+    private IEnumerable<ActivityResult> Ticked => Items.Where(item => _ticked.Contains(item.PieceId));
+
+    private void Toggle(string pieceId)
+    {
+        if (!_ticked.Remove(pieceId))
+        {
+            _ticked.Add(pieceId);
+        }
+    }
+
+    private void Save()
+    {
+        string entry = Guid.NewGuid().ToString("N")[..12];
+        List<ActivityResult> ticked = Ticked.ToList();
+        Workspace.UpdateJournal(journal =>
+        {
+            foreach (ActivityResult item in ticked)
+            {
+                ActivityOverride current = journal.Overrides.GetValueOrDefault(item.PieceId) ?? journal.Overrides.GetValueOrDefault(item.Activity.Id) ?? new ActivityOverride();
+                current.Entry = entry;
+                journal.Overrides.Remove(item.Activity.Id);
+                journal.Overrides[item.PieceId] = current;
+            }
+        });
+        Dialog.Close(DialogResult.Ok(true));
+    }
+}

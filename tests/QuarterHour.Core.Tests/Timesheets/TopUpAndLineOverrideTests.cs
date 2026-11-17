@@ -137,6 +137,26 @@ public sealed class TopUpAndLineOverrideTests
     }
 
     [Test]
+    public void APortalSessionIsSplitIntoAnEntryOfItsOwn()
+    {
+        Activity search = TestData.AgentBlock("s1", "portal", At(Monday, 9), 50, title: "Wire up search");
+        Activity filters = TestData.AgentBlock("s2", "portal", At(Monday, 11), 20, title: "Fix filters");
+        Activity docs = TestData.AgentBlock("s3", "portal", At(Monday, 13), 20, title: "Write the docs");
+        _journal.Overrides[filters.Id] = new ActivityOverride { Entry = "e1" };
+        _journal.Overrides[docs.Id] = new ActivityOverride { Entry = "e1" };
+
+        PeriodTimesheet sheet = Build(search, filters, docs);
+
+        ItShouldLogTheGroupedWorkAsItsOwnEntry();
+        ItShouldRoundEachEntryOnItsOwn();
+
+        void ItShouldLogTheGroupedWorkAsItsOwnEntry() =>
+            sheet.Lines.Select(line => line.Description).ShouldBe(["portal: Wire up search", "portal: Fix filters; Write the docs"]);
+
+        void ItShouldRoundEachEntryOnItsOwn() => sheet.Lines.Select(line => line.Minutes).ShouldBe([45, 45]);
+    }
+
+    [Test]
     public void ASmallProjectSharesADayWithABigOne()
     {
         PeriodTimesheet sheet = Build(

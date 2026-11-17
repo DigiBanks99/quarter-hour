@@ -80,6 +80,7 @@
             Location = _excluded ? null : _location,
             Description = _excluded || string.IsNullOrWhiteSpace(_description) ? null : _description.Trim(),
             Minutes = _excluded ? null : _minutes,
+            Entry = Item.Override?.Entry,
         };
         Workspace.UpdateJournal(journal =>
         {

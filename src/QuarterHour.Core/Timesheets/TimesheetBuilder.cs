@@ -333,7 +333,10 @@ public sealed class TimesheetBuilder
     /// <summary>
     /// Time is added up and rounded per meeting, or per day, category and location for agent work (or for everything,
     /// when rounding the daily total). That rounded time is then shared between the lines it is written as: one per
-    /// project for agent work, and more when a description would outgrow <see cref="TimesheetLine.MaxDescriptionLength"/>.    /// </summary>
+    /// project for agent work, and more when a description would outgrow <see cref="TimesheetLine.MaxDescriptionLength"/>.
+    /// Blocks the user grouped into an entry of their own (<see cref="ActivityOverride.Entry"/>) leave their day's line
+    /// and are rounded as an entry of their own.
+    /// </summary>
     private static List<TimesheetLine> BuildLines(List<Piece> pieces, RoundingSettings rounding, string sentiment)
     {
         List<Piece> counting = pieces.Where(piece => piece.IsCounting).OrderBy(piece => piece.Start).ToList();
@@ -365,9 +368,18 @@ public sealed class TimesheetBuilder
             }
 
             string id = $"line:{first.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}:{(group.All(piece => piece.Activity.Source == ActivitySource.Agent) ? "agent" : "all")}:{first.CategoryId ?? "unmapped"}:{first.Location.Name}";
-            rounded.Add((group, dailyTotals
-                ? Drafts(id, group)
-                : group.GroupBy(piece => piece.Activity.GroupLabel).SelectMany(project => Drafts($"{id}:{project.Key}", project.ToList())).ToList()));
+            List<Piece> rest = group.Where(piece => piece.Override?.Entry is null).ToList();
+            if (rest.Count > 0)
+            {
+                rounded.Add((rest, dailyTotals
+                    ? Drafts(id, rest)
+                    : rest.GroupBy(piece => piece.Activity.GroupLabel).SelectMany(project => Drafts($"{id}:{project.Key}", project.ToList())).ToList()));
+            }
+
+            foreach (IGrouping<string, Piece> entry in group.Where(piece => piece.Override?.Entry is not null).GroupBy(piece => piece.Override!.Entry!))
+            {
+                rounded.Add((entry.ToList(), Drafts($"{id}:entry:{entry.Key}", entry.ToList())));
+            }
         }
 
         List<TimesheetLine> lines = [];
