@@ -243,7 +243,19 @@ else
                                                         <div class="qh-topup" title="Added to reach the day's standard hours">+@Ui.Duration(TimeSpan.FromMinutes(line.TopUpMinutes)) top-up</div>
                                                     }
                                                 </td>
-                                                <td class="qh-actions">
+                                                <td class="qh-actions qh-nowrap">
+                                                    @if (line.PieceIds.Count > 1)
+                                                    {
+                                                        <MudTooltip Text="Split into entries">
+                                                            <MudIconButton Icon="@Icons.Material.Outlined.CallSplit" Size="Size.Small" OnClick="() => SplitAsync(line, all)" />
+                                                        </MudTooltip>
+                                                    }
+                                                    @if (IsEntry(line))
+                                                    {
+                                                        <MudTooltip Text="Put this entry back on the day's line">
+                                                            <MudIconButton Icon="@Icons.Material.Outlined.CallMerge" Size="Size.Small" OnClick="() => Unsplit(line, all)" />
+                                                        </MudTooltip>
+                                                    }
                                                     @if (line.Override is not null)
                                                     {
                                                         <MudTooltip Text="Undo my changes to this line">
@@ -263,6 +275,7 @@ else
                             </div>
                             <MudText Typo="Typo.caption" Class="qh-muted">
                                 Meetings are rounded one by one; agent work is added up per category and location for the day, rounded, and written as a line per project (more when a description passes @TimesheetLine.MaxDescriptionLength characters)@(Config.Targets.TopUpCategoryId is null ? "" : ", then the day is topped up").
+                                Split a line to group its work into entries of their own; each entry is rounded on its own.
                                 Edits here change only this line of the export.
                             </MudText>
                         }
@@ -400,6 +413,37 @@ else
     });
 
     private void ResetLine(TimesheetLine line) => Workspace.UpdateJournal(journal => journal.Lines.Remove(line.Id));
+
+    private static List<ActivityResult> ItemsOf(TimesheetLine line, List<ActivityResult> all) =>
+        all.Where(item => line.PieceIds.Contains(item.PieceId)).ToList();
+
+    private static bool IsEntry(TimesheetLine line) => line.Id.Contains(":entry:", StringComparison.Ordinal);
+
+    private async Task SplitAsync(TimesheetLine line, List<ActivityResult> all)
+    {
+        DialogParameters<SplitLineDialog> parameters = new() { { dialog => dialog.Items, ItemsOf(line, all) } };
+        await Dialogs.ShowAsync<SplitLineDialog>("Split into entries", parameters, new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseButton = true });
+    }
+
+    private void Unsplit(TimesheetLine line, List<ActivityResult> all)
+    {
+        List<ActivityResult> items = ItemsOf(line, all);
+        Workspace.UpdateJournal(journal =>
+        {
+            foreach (ActivityResult item in items)
+            {
+                foreach (string key in new[] { item.PieceId, item.Activity.Id })
+                {
+                    if (journal.Overrides.GetValueOrDefault(key) is { } current)
+                    {
+                        current.Entry = null;
+                    }
+                }
+            }
+
+            journal.Lines.Remove(line.Id);
+        });
+    }
 
     /// <summary>Only keep a description the user actually changed.</summary>
     private static string? Changed(string? value, string current) =>
