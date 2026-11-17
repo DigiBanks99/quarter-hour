@@ -10,7 +10,7 @@ namespace QuarterHour.Core.Timesheets;
 /// </summary>
 public static class CandidateEntries
 {
-    private const int MaxDescriptionLength = 500;
+    private const int MaxDescriptionLength = TimesheetLine.MaxDescriptionLength;
 
     /// <summary>Whether the candidates can become one entry: all unattributed, made on one day, in one project.</summary>
     public static bool CanCombine(IReadOnlyList<Placement> candidates, TimeZoneInfo timeZone, IReadOnlyDictionary<string, string> friendlyNames) =>

@@ -48,6 +48,8 @@ Data lives in `%LOCALAPPDATA%\QuarterHour` (`config.json`, `journal.json`, cache
   overlap evenly; double-booked meetings: the earlier one wins.
 - **Rounding** to 15 min, rounding up from 7 min past the quarter (50m → 45m, 3h22m → 3h30m), per meeting and per
   day's agent work per category/location. Strict "nearest" is a setting (round up from 8).
+- **Lines**: a day's agent work is written as one line per project, sharing the rounded time between them. A
+  description the upload would reject (over 256 characters) is split over more lines the same way.
 - **Location**: entry change → meeting pin → day setting → weekly/fortnightly/monthly schedule → default.
 - **Targets**: warns below 160 billable hours (less leave); flags working days short of 8 h; SA public holidays built in.
 - On a full leave day, meetings still in the calendar are left out.

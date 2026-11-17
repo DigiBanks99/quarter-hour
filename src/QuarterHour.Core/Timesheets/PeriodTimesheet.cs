@@ -65,6 +65,9 @@ public sealed record ActivityResult
 /// <summary>A row of the timesheet: rounded time against a category and location on a day.</summary>
 public sealed record TimesheetLine
 {
+    /// <summary>The longest description the Timesheet system's upload accepts.</summary>
+    public const int MaxDescriptionLength = 256;
+
     public required string Id { get; init; }
     public required DateOnly Date { get; init; }
     public string? CategoryId { get; init; }

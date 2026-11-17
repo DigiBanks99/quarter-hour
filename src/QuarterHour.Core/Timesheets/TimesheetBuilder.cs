@@ -11,14 +11,14 @@ namespace QuarterHour.Core.Timesheets;
 /// <summary>
 /// Builds a period's timesheet from raw activities:
 /// classify (rules) → apply overrides → split per day → resolve overlaps → resolve locations →
-/// group into lines (meetings one each, agent work per day/category/location) → round → total.
+/// group into lines (meetings one each, agent work per day/category/location) → round → write agent work per
+/// project, in descriptions the Timesheet system accepts → total.
 /// </summary>
 public sealed class TimesheetBuilder
 {
     private const int ManualPriority = 3;
     private const int CalendarPriority = 2;
     private const int AgentPriority = 1;
-    private const int MaxDescriptionLength = 500;
 
     /// <summary>Agents running side by side split the overlapping time evenly.</summary>
     private static readonly IReadOnlySet<int> SharedPriorities = new HashSet<int> { AgentPriority };
@@ -330,11 +330,16 @@ public sealed class TimesheetBuilder
         return piece.Activity.Source == ActivitySource.Agent ? AgentWork.Describe(piece.Activity) : piece.Activity.Title;
     }
 
+    /// <summary>
+    /// Time is added up and rounded per meeting, or per day, category and location for agent work (or for everything,
+    /// when rounding the daily total). That rounded time is then shared between the lines it is written as: one per
+    /// project for agent work, and more when a description would outgrow <see cref="TimesheetLine.MaxDescriptionLength"/>.    /// </summary>
     private static List<TimesheetLine> BuildLines(List<Piece> pieces, RoundingSettings rounding, string sentiment)
     {
         List<Piece> counting = pieces.Where(piece => piece.IsCounting).OrderBy(piece => piece.Start).ToList();
+        bool dailyTotals = rounding.Scope == RoundingScope.DailyTotalPerCategory;
         List<List<Piece>> groups = [];
-        if (rounding.Scope == RoundingScope.DailyTotalPerCategory)
+        if (dailyTotals)
         {
             groups.AddRange(counting
                 .GroupBy(piece => (piece.Date, piece.CategoryId, piece.Location.Name))
@@ -349,39 +354,55 @@ public sealed class TimesheetBuilder
                 .Select(group => group.ToList()));
         }
 
-        List<TimesheetLine> lines = [];
+        List<(List<Piece> Pieces, List<LineDraft> Drafts)> rounded = [];
         foreach (List<Piece> group in groups)
         {
             Piece first = group[0];
-            TimeSpan raw = group.Aggregate(TimeSpan.Zero, (total, piece) => total + piece.Counted);
-            List<Piece> timed = group.Where(piece => piece.Timed).ToList();
-            bool single = group.Count == 1 && first.Activity.Source != ActivitySource.Agent;
-            string id = single
-                ? "line:" + first.Id
-                : $"line:{first.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}:{(group.All(piece => piece.Activity.Source == ActivitySource.Agent) ? "agent" : "all")}:{first.CategoryId ?? "unmapped"}:{first.Location.Name}";
-
-            TimesheetLine line = new()
+            if (group.Count == 1 && first.Activity.Source != ActivitySource.Agent)
             {
-                Id = id,
-                Date = first.Date,
-                CategoryId = first.CategoryId,
-                Location = first.Location.Name,
-                Description = CombinedDescription(group),
-                Source = group.Select(piece => piece.Activity.Source).Distinct().Count() == 1 ? first.Activity.Source : null,
-                Raw = raw,
-                Minutes = Rounding.RoundMinutes(raw, rounding),
-                PieceIds = group.Select(piece => piece.Id).ToList(),
-                Start = timed.Count > 0 ? timed.Min(piece => piece.Start) : null,
-                End = timed.Count > 0 ? timed.Max(piece => piece.End) : null,
-                Sentiment = sentiment,
-            };
-
-            foreach (Piece piece in group)
-            {
-                piece.LineId = line.Id;
+                rounded.Add((group, [new LineDraft("line:" + first.Id, first.Description, first.Counted, group)]));
+                continue;
             }
 
-            lines.Add(line);
+            string id = $"line:{first.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}:{(group.All(piece => piece.Activity.Source == ActivitySource.Agent) ? "agent" : "all")}:{first.CategoryId ?? "unmapped"}:{first.Location.Name}";
+            rounded.Add((group, dailyTotals
+                ? Drafts(id, group)
+                : group.GroupBy(piece => piece.Activity.GroupLabel).SelectMany(project => Drafts($"{id}:{project.Key}", project.ToList())).ToList()));
+        }
+
+        List<TimesheetLine> lines = [];
+        foreach ((List<Piece> group, List<LineDraft> drafts) in rounded)
+        {
+            Piece first = group[0];
+            TimeSpan raw = group.Aggregate(TimeSpan.Zero, (total, piece) => total + piece.Counted);
+            int[] minutes = Share(Rounding.RoundMinutes(raw, rounding), Math.Max(1, rounding.IncrementMinutes), drafts.Select(draft => draft.Raw).ToList());
+            for (int index = 0; index < drafts.Count; index++)
+            {
+                LineDraft draft = drafts[index];
+                List<Piece> timed = draft.Pieces.Where(piece => piece.Timed).ToList();
+                TimesheetLine line = new()
+                {
+                    Id = draft.Id,
+                    Date = first.Date,
+                    CategoryId = first.CategoryId,
+                    Location = first.Location.Name,
+                    Description = draft.Description,
+                    Source = draft.Pieces.Select(piece => piece.Activity.Source).Distinct().Count() == 1 ? draft.Pieces[0].Activity.Source : null,
+                    Raw = draft.Raw,
+                    Minutes = minutes[index],
+                    PieceIds = draft.Pieces.Select(piece => piece.Id).ToList(),
+                    Start = timed.Count > 0 ? timed.Min(piece => piece.Start) : null,
+                    End = timed.Count > 0 ? timed.Max(piece => piece.End) : null,
+                    Sentiment = sentiment,
+                };
+
+                foreach (Piece piece in draft.Pieces)
+                {
+                    piece.LineId ??= line.Id;
+                }
+
+                lines.Add(line);
+            }
         }
 
         return lines
@@ -392,40 +413,165 @@ public sealed class TimesheetBuilder
     }
 
     /// <summary>
-    /// One line per workstream, like the Timesheet system's own rows: "portal: Fix login; Add tests", where each part is
-    /// a block's pull request titles and commit subjects or, without either, its session's title.
-    /// Activities whose mapping has a description template keep their rendered description as its own line.
+    /// The lines a group of activities is written as: one, or as many as it takes to keep every description within
+    /// <see cref="TimesheetLine.MaxDescriptionLength"/>. Each line carries the time of the work it describes.
     /// </summary>
-    private static string CombinedDescription(List<Piece> group)
+    private static List<LineDraft> Drafts(string id, List<Piece> group)
     {
-        if (group.Count == 1 && group[0].Activity.Source != ActivitySource.Agent)
+        List<List<DescriptionPart>> lines = [[]];
+        foreach (DescriptionPart part in Parts(group))
         {
-            return group[0].Description;
+            if (lines[^1].Count > 0 && Describe([.. lines[^1], part]).Length > TimesheetLine.MaxDescriptionLength)
+            {
+                lines.Add([]);
+            }
+
+            lines[^1].Add(part);
         }
 
-        List<string> parts = [];
+        return lines
+            .Select((parts, index) =>
+            {
+                string description = Describe(parts);
+                return new LineDraft(
+                    index == 0 ? id : $"{id}#{index + 1}",
+                    description.Length <= TimesheetLine.MaxDescriptionLength ? description : description[..(TimesheetLine.MaxDescriptionLength - 1)] + "…",
+                    parts.Aggregate(TimeSpan.Zero, (total, part) => total + part.Time),
+                    parts.SelectMany(part => part.Pieces).Distinct().OrderBy(piece => piece.Start).ToList());
+            })
+            .ToList();
+    }
+
+    /// <summary>
+    /// What there is to say about a group, in the order it is written: agent work with a description of its own (an
+    /// override or a mapping's template), then each project's pull request titles and commit subjects or, without
+    /// either, its session's title, then anything that isn't agent work. Something said twice is said once, and an
+    /// activity's time is spread evenly over what it says.
+    /// </summary>
+    private static List<DescriptionPart> Parts(List<Piece> group)
+    {
+        List<DescriptionPart> parts = [];
         List<Piece> agentPieces = group.Where(piece => piece.Activity.Source == ActivitySource.Agent).ToList();
-        parts.AddRange(agentPieces
-            .Where(piece => piece.Override?.Description is not null || piece.MappingRule?.DescriptionTemplate is { Length: > 0 })
-            .Select(piece => piece.Description));
-        foreach (IGrouping<string, Piece> project in agentPieces
-                     .Where(piece => piece.Override?.Description is null && piece.MappingRule?.DescriptionTemplate is not { Length: > 0 })
-                     .GroupBy(piece => piece.Activity.GroupLabel))
+        foreach (Piece piece in agentPieces.Where(HasOwnDescription))
         {
-            List<string> titles = project
-                .SelectMany(piece => AgentWork.Parts(piece.Activity))
-                .Where(title => !string.Equals(title, project.Key, StringComparison.OrdinalIgnoreCase))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            parts.Add(titles.Count == 0 ? project.Key : $"{project.Key}: {string.Join("; ", titles)}");
+            Add(piece, null, [piece.Description]);
         }
 
-        parts.AddRange(group
-            .Where(piece => piece.Activity.Source != ActivitySource.Agent)
-            .Select(piece => piece.Description));
+        foreach (IGrouping<string, Piece> project in agentPieces.Where(piece => !HasOwnDescription(piece)).GroupBy(piece => piece.Activity.GroupLabel))
+        {
+            foreach (Piece piece in project)
+            {
+                List<string> titles = AgentWork.Parts(piece.Activity)
+                    .Where(title => !string.Equals(title, project.Key, StringComparison.OrdinalIgnoreCase))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                Add(piece, project.Key, titles.Count == 0 ? [""] : titles);
+            }
+        }
 
-        string combined = string.Join("\n", parts.Where(part => part.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase));
-        return combined.Length <= MaxDescriptionLength ? combined : combined[..(MaxDescriptionLength - 1)] + "…";
+        foreach (Piece piece in group.Where(piece => piece.Activity.Source != ActivitySource.Agent))
+        {
+            Add(piece, null, [piece.Description]);
+        }
+
+        return parts;
+
+        void Add(Piece piece, string? project, IReadOnlyList<string> texts)
+        {
+            foreach (string text in texts)
+            {
+                DescriptionPart? part = parts.Find(existing => existing.Project == project && string.Equals(existing.Text, text, StringComparison.OrdinalIgnoreCase));
+                if (part is null)
+                {
+                    parts.Add(part = new DescriptionPart(project, text));
+                }
+
+                part.Time += piece.Counted / texts.Count;
+                part.Pieces.Add(piece);
+            }
+        }
+    }
+
+    private static bool HasOwnDescription(Piece piece) =>
+        piece.Override?.Description is not null || piece.MappingRule?.DescriptionTemplate is { Length: > 0 };
+
+    /// <summary>One line per workstream, like the Timesheet system's own rows: "portal: Fix login; Add tests".</summary>
+    private static string Describe(List<DescriptionPart> parts)
+    {
+        List<string> lines = [];
+        int index = 0;
+        while (index < parts.Count)
+        {
+            if (parts[index].Project is not { } project)
+            {
+                lines.Add(parts[index++].Text);
+                continue;
+            }
+
+            List<string> titles = [];
+            for (; index < parts.Count && parts[index].Project == project; index++)
+            {
+                if (parts[index].Text.Length > 0)
+                {
+                    titles.Add(parts[index].Text);
+                }
+            }
+
+            lines.Add(titles.Count == 0 ? project : $"{project}: {string.Join("; ", titles)}");
+        }
+
+        return string.Join("\n", lines.Where(line => line.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Shares rounded time between lines in whole increments, by the time each measured, so splitting never changes
+    /// the total: work measured at 1h, 15m and 30m gets exactly that. A line that would get nothing takes an increment
+    /// from the biggest, while there are enough to go round, so that none drops off the export.
+    /// </summary>
+    private static int[] Share(int minutes, int increment, IReadOnlyList<TimeSpan> measured)
+    {
+        if (measured.Count == 1)
+        {
+            return [minutes];
+        }
+
+        int units = minutes / increment;
+        double total = measured.Sum(time => time.TotalMinutes);
+        double[] quotas = measured.Select(time => total > 0 ? units * time.TotalMinutes / total : (double)units / measured.Count).ToArray();
+        int[] counts = quotas.Select(quota => (int)Math.Floor(quota)).ToArray();
+        int left = units - counts.Sum();
+        foreach (int index in Enumerable.Range(0, counts.Length).OrderByDescending(index => quotas[index] - counts[index]).ThenBy(index => index).Take(left))
+        {
+            counts[index]++;
+        }
+
+        if (units >= counts.Length)
+        {
+            for (int index = 0; index < counts.Length; index++)
+            {
+                if (counts[index] == 0)
+                {
+                    int biggest = Array.IndexOf(counts, counts.Max());
+                    counts[biggest]--;
+                    counts[index]++;
+                }
+            }
+        }
+
+        int[] shares = counts.Select(count => count * increment).ToArray();
+        shares[0] += minutes - units * increment;
+        return shares;
+    }
+
+    private sealed record LineDraft(string Id, string Description, TimeSpan Raw, List<Piece> Pieces);
+
+    /// <summary>One thing a description says, such as a commit subject under its project, and the time behind it.</summary>
+    private sealed class DescriptionPart(string? project, string text)
+    {
+        public string? Project { get; } = project;
+        public string Text { get; } = text;
+        public TimeSpan Time { get; set; }
+        public List<Piece> Pieces { get; } = [];
     }
 
     /// <summary>
