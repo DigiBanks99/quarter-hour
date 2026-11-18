@@ -250,6 +250,113 @@ public sealed class EntriesTests
         void ItShouldAllowThem() => reason.ShouldBeNull();
     }
 
+    [Test]
+    public void ABlockIsDroppedOnAnother()
+    {
+        Activity search = TestData.AgentBlock("s1", "portal", At(9), 40, title: "Wire up search");
+        Activity prompts = TestData.AgentBlock("s2", "proposals", At(11), 20, title: "Tune the prompts");
+        PeriodTimesheet sheet = Build(search, prompts);
+
+        string entry = Entries.Join(_journal, Item(sheet, prompts.Id), Item(sheet, search.Id), sheet.Activities);
+        PeriodTimesheet after = Build(search, prompts);
+
+        ItShouldMakeAnEntryOfBoth();
+
+        void ItShouldMakeAnEntryOfBoth() => after.Lines.Single().ShouldSatisfyAllConditions(
+            line => line.EntryId.ShouldBe(entry),
+            line => line.PieceIds.ShouldBe([search.Id, prompts.Id], ignoreOrder: true));
+    }
+
+    [Test]
+    public void AManualEntryIsDroppedOnAnEntry()
+    {
+        Activity search = TestData.AgentBlock("s1", "portal", At(9), 40, title: "Wire up search");
+        Activity prompts = TestData.AgentBlock("s2", "proposals", At(11), 20, title: "Tune the prompts");
+        string review = Manual("w1", At(13), 30, DefaultWorkspace.ClientDevelopment, "Review the design");
+        Group("e1", search.Id, prompts.Id);
+        PeriodTimesheet sheet = Build(search, prompts);
+
+        Entries.Join(_journal, Item(sheet, review), Item(sheet, search.Id), sheet.Activities);
+        PeriodTimesheet after = Build(search, prompts);
+
+        ItShouldJoinThatEntry();
+
+        void ItShouldJoinThatEntry() => after.Lines.Single().ShouldSatisfyAllConditions(
+            line => line.EntryId.ShouldBe("e1"),
+            line => line.PieceIds.Count.ShouldBe(3));
+    }
+
+    [Test]
+    public void ABlockIsMovedFromOneEntryToAnother()
+    {
+        Activity search = TestData.AgentBlock("s1", "portal", At(9), 40, title: "Wire up search");
+        Activity filters = TestData.AgentBlock("s2", "portal", At(10), 40, title: "Fix filters");
+        Activity docs = TestData.AgentBlock("s3", "portal", At(11), 40, title: "Write the docs");
+        Activity prompts = TestData.AgentBlock("s4", "proposals", At(13), 20, title: "Tune the prompts");
+        Activity tests = TestData.AgentBlock("s5", "proposals", At(14), 20, title: "Add tests");
+        Group("e1", search.Id, filters.Id, docs.Id);
+        Group("e2", prompts.Id, tests.Id);
+        PeriodTimesheet sheet = Build(search, filters, docs, prompts, tests);
+
+        Entries.Join(_journal, Item(sheet, docs.Id), Item(sheet, prompts.Id), sheet.Activities);
+        PeriodTimesheet after = Build(search, filters, docs, prompts, tests);
+
+        ItShouldLeaveItsOldEntry();
+        ItShouldJoinTheNewOne();
+
+        void ItShouldLeaveItsOldEntry() => after.Lines.Single(line => line.EntryId == "e1").PieceIds.ShouldBe([search.Id, filters.Id], ignoreOrder: true);
+
+        void ItShouldJoinTheNewOne() => after.Lines.Single(line => line.EntryId == "e2").PieceIds.ShouldBe([docs.Id, prompts.Id, tests.Id], ignoreOrder: true);
+    }
+
+    [Test]
+    public void TheSecondLastActivityIsTakenOutOfAnEntry()
+    {
+        Activity search = TestData.AgentBlock("s1", "portal", At(9), 40, title: "Wire up search");
+        Activity filters = TestData.AgentBlock("s2", "portal", At(11), 20, title: "Fix filters");
+        Group("e1", search.Id, filters.Id);
+        _journal.Entries["e1"] = new EntryOverride { Description = "Search" };
+        PeriodTimesheet sheet = Build(search, filters);
+        _journal.Lines[sheet.Lines.Single().Id] = new LineOverride { Ticket = "UY-42" };
+
+        Entries.TakeOut(_journal, Item(sheet, filters.Id), sheet.Activities);
+
+        ItShouldBreakTheEntryUp();
+        ItShouldForgetHowTheEntryWasDescribed();
+
+        void ItShouldBreakTheEntryUp() => _journal.Overrides.ShouldBeEmpty();
+
+        void ItShouldForgetHowTheEntryWasDescribed() => _journal.ShouldSatisfyAllConditions(
+            journal => journal.Entries.ShouldBeEmpty(),
+            journal => journal.Lines.ShouldBeEmpty());
+    }
+
+    [Test]
+    public void AnActivityIsTakenOutOfABiggerEntry()
+    {
+        Activity search = TestData.AgentBlock("s1", "portal", At(9), 40, title: "Wire up search");
+        Activity filters = TestData.AgentBlock("s2", "portal", At(11), 20, title: "Fix filters");
+        Activity docs = TestData.AgentBlock("s3", "portal", At(13), 20, title: "Write the docs");
+        Group("e1", search.Id, filters.Id, docs.Id);
+        _journal.Overrides[docs.Id].Location = "Client";
+        _journal.Entries["e1"] = new EntryOverride { Unticked = [docs.Id, filters.Id] };
+        PeriodTimesheet sheet = Build(search, filters, docs);
+
+        Entries.TakeOut(_journal, Item(sheet, docs.Id), sheet.Activities);
+
+        ItShouldKeepTheEntry();
+        ItShouldKeepTheActivitysOtherChanges();
+        ItShouldForgetItsTick();
+
+        void ItShouldKeepTheEntry() => _journal.Overrides.Where(pair => pair.Value.Entry == "e1").Select(pair => pair.Key).ShouldBe([search.Id, filters.Id], ignoreOrder: true);
+
+        void ItShouldKeepTheActivitysOtherChanges() => _journal.Overrides[docs.Id].Location.ShouldBe("Client");
+
+        void ItShouldForgetItsTick() => _journal.Entries["e1"].Unticked.ShouldBe([filters.Id]);
+    }
+
+    private static ActivityResult Item(PeriodTimesheet sheet, string pieceId) => sheet.Activities.Single(item => item.PieceId == pieceId);
+
     private void Group(string entry, params string[] pieceIds)
     {
         foreach (string pieceId in pieceIds)
