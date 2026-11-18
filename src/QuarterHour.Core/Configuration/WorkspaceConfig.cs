@@ -48,6 +48,7 @@ public sealed class WorkspaceConfig
         Locations ??= new LocationSettings();
         Locations.Names ??= [];
         Locations.Schedule ??= [];
+        Locations.EntryOrder ??= ["Entelect", "Client", "Home"];
         if (Locations.Names.Count == 0)
         {
             Locations.Names.AddRange(LocationSettings.DefaultNames);
@@ -265,6 +266,12 @@ public sealed class LocationSettings
 
     public List<string> Names { get; set; } = [.. DefaultNames];
     public string Default { get; set; } = "Client";
+
+    /// <summary>
+    /// The locations whose activities may be grouped into an entry, in the order that decides an entry's location when
+    /// its activities differ. Activities anywhere else can't join an entry.
+    /// </summary>
+    public List<string> EntryOrder { get; set; } = ["Entelect", "Client", "Home"];
 
     /// <summary>Recurring "where do I usually work" rules. The first one that applies to a day wins.</summary>
     public List<LocationScheduleRule> Schedule { get; set; } = [];

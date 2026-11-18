@@ -55,6 +55,9 @@ public sealed record ActivityResult
     public ActivityOverride? Override { get; init; }
     public string? LineId { get; init; }
 
+    /// <summary>The entry it is logged in. Null when it was never grouped, or no longer qualifies for its entry.</summary>
+    public string? EntryId { get; init; }
+
     /// <summary>Why the builder itself changed the activity's status, such as "On leave that day".</summary>
     public string? Note { get; init; }
 
@@ -69,6 +72,10 @@ public sealed record TimesheetLine
     public const int MaxDescriptionLength = 256;
 
     public required string Id { get; init; }
+
+    /// <summary>The entry this line logs (see <see cref="Configuration.ActivityOverride.Entry"/>), when it is one.</summary>
+    public string? EntryId { get; init; }
+
     public required DateOnly Date { get; init; }
     public string? CategoryId { get; init; }
     public required string Location { get; init; }

@@ -19,6 +19,9 @@ public sealed class Journal
     /// <summary>Where commits and pull requests go instead of where attribution put them, keyed like "commit:&lt;sha&gt;" or "pr:&lt;id&gt;".</summary>
     public Dictionary<string, CandidateOverride> Candidates { get; set; } = [];
 
+    /// <summary>How each entry (<see cref="ActivityOverride.Entry"/>) is described, keyed by entry id.</summary>
+    public Dictionary<string, EntryOverride> Entries { get; set; } = [];
+
     public static string DayKey(DateOnly date) => date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
 
     public DayOverride? FindDay(DateOnly date) => Days.GetValueOrDefault(DayKey(date));
@@ -30,9 +33,15 @@ public sealed class Journal
         ManualEntries ??= [];
         Lines ??= [];
         Candidates ??= [];
+        Entries ??= [];
         foreach (ManualEntry entry in ManualEntries)
         {
             entry.Candidates ??= [];
+        }
+
+        foreach (EntryOverride entry in Entries.Values)
+        {
+            entry.Unticked ??= [];
         }
 
         return this;
@@ -63,6 +72,18 @@ public sealed class CandidateOverride
     public bool IsEmpty => BlockId is null && !NotRelevant;
 }
 
+/// <summary>How an entry is described: the titles left out of its description, or a description of its own.</summary>
+public sealed class EntryOverride
+{
+    /// <summary>Activities (piece ids) whose titles stay out of the description. Their time still counts.</summary>
+    public List<string> Unticked { get; set; } = [];
+
+    /// <summary>Replaces the description made from the ticked titles.</summary>
+    public string? Description { get; set; }
+
+    public bool IsEmpty => Unticked.Count == 0 && string.IsNullOrWhiteSpace(Description);
+}
+
 public sealed class ActivityOverride
 {
     /// <summary>true excludes the activity, false forces it in even when a rule filtered it out.</summary>
@@ -76,8 +97,9 @@ public sealed class ActivityOverride
     public int? Minutes { get; set; }
 
     /// <summary>
-    /// The timesheet entry the user grouped this block of agent work into, split off its day's line. Blocks sharing an
-    /// entry are logged together, as their own line, rounded on their own.
+    /// The timesheet entry the user grouped this activity into. Agent blocks and manual entries of one day and category
+    /// sharing an entry leave their usual lines and are logged together, as one line, rounded on their own
+    /// (see <see cref="Timesheets.Entries"/>).
     /// </summary>
     public string? Entry { get; set; }
 
