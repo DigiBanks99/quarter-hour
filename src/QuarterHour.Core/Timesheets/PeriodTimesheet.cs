@@ -24,8 +24,28 @@ public enum ActivityStatus
     Excluded,
 }
 
+/// <summary>
+/// One message an entry's description could say, such as a commit subject under its project.
+/// </summary>
+/// <param name="Key">How it is ticked or unticked (<see cref="Configuration.EntryOverride.Unticked"/>).</param>
+/// <param name="Project">The project it is said under, or null for work that isn't described by project.</param>
+/// <param name="Text">The message; empty when a project's work says nothing beyond its name.</param>
+/// <param name="Time">The share of the entry's time behind it.</param>
+/// <param name="PieceIds">The activities that say it.</param>
+public sealed record EntryTitle(string Key, string? Project, string Text, TimeSpan Time, IReadOnlyList<string> PieceIds);
+
+/// <summary>What the builder needs of an activity to say what it was.</summary>
+internal interface IDescribable
+{
+    Activity Activity { get; }
+    string Description { get; }
+    ActivityOverride? Override { get; }
+    Rule? MappingRule { get; }
+    TimeSpan Counted { get; }
+}
+
 /// <summary>One day's part of an activity, with everything decided about it.</summary>
-public sealed record ActivityResult
+public sealed record ActivityResult : IDescribable
 {
     public required Activity Activity { get; init; }
 

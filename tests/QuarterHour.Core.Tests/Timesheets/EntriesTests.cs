@@ -131,7 +131,7 @@ public sealed class EntriesTests
         Activity filters = TestData.AgentBlock("s2", "portal", At(11), 20, title: "Fix filters");
         string review = Manual("w1", At(13), 30, DefaultWorkspace.ClientDevelopment, "Review the design");
         Group("e1", search.Id, filters.Id, review);
-        _journal.Entries["e1"] = new EntryOverride { Unticked = [filters.Id] };
+        _journal.Entries["e1"] = new EntryOverride { Unticked = ["portal: Fix filters"] };
 
         TimesheetLine entry = Build(search, filters).Lines.Single();
 
@@ -149,7 +149,7 @@ public sealed class EntriesTests
         Activity search = TestData.AgentBlock("s1", "portal", At(9), 40, title: "Wire up search");
         Activity filters = TestData.AgentBlock("s2", "portal", At(11), 20, title: "Fix filters");
         Group("e1", search.Id, filters.Id);
-        _journal.Entries["e1"] = new EntryOverride { Unticked = [search.Id, filters.Id] };
+        _journal.Entries["e1"] = new EntryOverride { Unticked = ["portal: Wire up search", "PORTAL: fix filters"] };
 
         TimesheetLine entry = Build(search, filters).Lines.Single();
 
@@ -164,7 +164,7 @@ public sealed class EntriesTests
         Activity search = TestData.AgentBlock("s1", "portal", At(9), 40, title: "Wire up search");
         Activity filters = TestData.AgentBlock("s2", "portal", At(11), 20, title: "Fix filters");
         Group("e1", search.Id, filters.Id);
-        _journal.Entries["e1"] = new EntryOverride { Unticked = [filters.Id], Description = "  Search for the portal  " };
+        _journal.Entries["e1"] = new EntryOverride { Description = "  Search for the portal  " };
 
         TimesheetLine entry = Build(search, filters).Lines.Single();
 
@@ -339,21 +339,108 @@ public sealed class EntriesTests
         Activity docs = TestData.AgentBlock("s3", "portal", At(13), 20, title: "Write the docs");
         Group("e1", search.Id, filters.Id, docs.Id);
         _journal.Overrides[docs.Id].Location = "Client";
-        _journal.Entries["e1"] = new EntryOverride { Unticked = [docs.Id, filters.Id] };
         PeriodTimesheet sheet = Build(search, filters, docs);
 
         Entries.TakeOut(_journal, Item(sheet, docs.Id), sheet.Activities);
 
         ItShouldKeepTheEntry();
         ItShouldKeepTheActivitysOtherChanges();
-        ItShouldForgetItsTick();
 
         void ItShouldKeepTheEntry() => _journal.Overrides.Where(pair => pair.Value.Entry == "e1").Select(pair => pair.Key).ShouldBe([search.Id, filters.Id], ignoreOrder: true);
 
         void ItShouldKeepTheActivitysOtherChanges() => _journal.Overrides[docs.Id].Location.ShouldBe("Client");
-
-        void ItShouldForgetItsTick() => _journal.Entries["e1"].Unticked.ShouldBe([filters.Id]);
     }
+
+    [Test]
+    public void ABlocksCommitsAreTickedOneByOne()
+    {
+        Activity search = TestData.AgentBlock("s1", "portal", At(9), 60, title: "Search session") with
+        {
+            Commits = [Commit("a1", "feat(search): add the search box"), Commit("a2", "chore: bump the version"), Commit("a3", "fix(search): trim the query")],
+        };
+        string review = Manual("w1", At(11), 30, DefaultWorkspace.ClientDevelopment, "Review the design");
+        Group("e1", search.Id, review);
+        _journal.Entries["e1"] = new EntryOverride { Unticked = ["portal: Bump the version"] };
+
+        PeriodTimesheet sheet = Build(search);
+        IReadOnlyList<EntryTitle> titles = TimesheetBuilder.EntryTitles(sheet.Activities.Where(item => item.EntryId == "e1"));
+
+        ItShouldListEachMessage();
+        ItShouldLeaveTheUntickedOneOut();
+        ItShouldStillCountTheBlocksTime();
+
+        void ItShouldListEachMessage() => titles.Select(title => title.Key).ShouldBe(
+            ["portal: Add the search box", "portal: Bump the version", "portal: Trim the query", "Review the design"]);
+
+        void ItShouldLeaveTheUntickedOneOut() => sheet.Lines.Single().Description.ShouldBe("portal: Add the search box; Trim the query\nReview the design");
+
+        void ItShouldStillCountTheBlocksTime() => sheet.Lines.Single().Minutes.ShouldBe(90);
+    }
+
+    [Test]
+    public void TheEntryEditorPreviewsTheTickedTitles()
+    {
+        Activity search = TestData.AgentBlock("s1", "portal", At(9), 40, title: "Wire up search");
+        Activity prompts = TestData.AgentBlock("s2", "proposals", At(11), 20, title: "Tune the prompts");
+        Activity filters = TestData.AgentBlock("s3", "portal", At(13), 20, title: "Fix filters");
+        string review = Manual("w1", At(14), 30, DefaultWorkspace.ClientDevelopment, "Review the design");
+        Group("e1", search.Id, prompts.Id, filters.Id, review);
+        _journal.Entries["e1"] = new EntryOverride { Unticked = ["proposals: Tune the prompts"] };
+        PeriodTimesheet sheet = Build(search, prompts, filters);
+
+        string preview = TimesheetBuilder.DescribeEntry(sheet.Activities.Where(item => item.EntryId == "e1").Reverse(), ["Proposals: tune the prompts"]);
+
+        ItShouldSayWhatTheLineSays();
+
+        void ItShouldSayWhatTheLineSays() => preview.ShouldSatisfyAllConditions(
+            text => text.ShouldBe(sheet.Lines.Single().Description),
+            text => text.ShouldBe("portal: Wire up search; Fix filters\nReview the design"));
+    }
+
+    [Test]
+    public void AnEntryIsDescribedAfterItsLineWasEdited()
+    {
+        Activity search = TestData.AgentBlock("s1", "portal", At(9), 40, title: "Wire up search");
+        Activity filters = TestData.AgentBlock("s2", "portal", At(11), 20, title: "Fix filters");
+        Group("e1", search.Id, filters.Id);
+        string lineId = Build(search, filters).Lines.Single().Id;
+        _journal.Lines[lineId] = new LineOverride { Description = "Old words", Ticket = "UY-42" };
+
+        Entries.Describe(_journal, "e1", ["portal: Fix filters"], "  Search for the portal ");
+        TimesheetLine entry = Build(search, filters).Lines.Single();
+
+        ItShouldSayWhatWasWrittenInTheEditor();
+        ItShouldKeepTheLinesOtherChanges();
+        ItShouldRememberTheTicks();
+
+        void ItShouldSayWhatWasWrittenInTheEditor() => entry.Description.ShouldBe("Search for the portal");
+
+        void ItShouldKeepTheLinesOtherChanges() => entry.Ticket.ShouldBe("UY-42");
+
+        void ItShouldRememberTheTicks() => _journal.Entries["e1"].Unticked.ShouldBe(["portal: Fix filters"]);
+    }
+
+    [Test]
+    public void AnEntrysOwnDescriptionIsCleared()
+    {
+        Activity search = TestData.AgentBlock("s1", "portal", At(9), 40, title: "Wire up search");
+        Activity filters = TestData.AgentBlock("s2", "portal", At(11), 20, title: "Fix filters");
+        Group("e1", search.Id, filters.Id);
+        _journal.Entries["e1"] = new EntryOverride { Description = "Search for the portal" };
+
+        Entries.Describe(_journal, "e1", [], "   ");
+        TimesheetLine entry = Build(search, filters).Lines.Single();
+
+        ItShouldGoBackToTheTickedTitles();
+        ItShouldForgetTheEntrysDescription();
+
+        void ItShouldGoBackToTheTickedTitles() => entry.Description.ShouldBe("portal: Wire up search; Fix filters");
+
+        void ItShouldForgetTheEntrysDescription() => _journal.Entries.ShouldBeEmpty();
+    }
+
+    private static Commit Commit(string sha, string subject) =>
+        new() { Sha = sha, Subject = subject, AuthoredAt = new DateTimeOffset(At(9), TimeSpan.Zero), ProjectKey = "portal" };
 
     private static ActivityResult Item(PeriodTimesheet sheet, string pieceId) => sheet.Activities.Single(item => item.PieceId == pieceId);
 

@@ -447,7 +447,7 @@ public sealed class TimesheetBuilder
                     index == 0 ? id : $"{id}#{index + 1}",
                     description.Length <= TimesheetLine.MaxDescriptionLength ? description : description[..(TimesheetLine.MaxDescriptionLength - 1)] + "…",
                     parts.Aggregate(TimeSpan.Zero, (total, part) => total + part.Time),
-                    parts.SelectMany(part => part.Pieces).Distinct().OrderBy(piece => piece.Start).ToList());
+                    parts.SelectMany(part => part.Pieces).OfType<Piece>().Distinct().OrderBy(piece => piece.Start).ToList());
             })
             .ToList();
     }
@@ -458,18 +458,18 @@ public sealed class TimesheetBuilder
     /// either, its session's title, then anything that isn't agent work. Something said twice is said once, and an
     /// activity's time is spread evenly over what it says.
     /// </summary>
-    private static List<DescriptionPart> Parts(List<Piece> group)
+    private static List<DescriptionPart> Parts(IReadOnlyList<IDescribable> group)
     {
         List<DescriptionPart> parts = [];
-        List<Piece> agentPieces = group.Where(piece => piece.Activity.Source == ActivitySource.Agent).ToList();
-        foreach (Piece piece in agentPieces.Where(HasOwnDescription))
+        List<IDescribable> agentPieces = group.Where(piece => piece.Activity.Source == ActivitySource.Agent).ToList();
+        foreach (IDescribable piece in agentPieces.Where(HasOwnDescription))
         {
             Add(piece, null, [piece.Description]);
         }
 
-        foreach (IGrouping<string, Piece> project in agentPieces.Where(piece => !HasOwnDescription(piece)).GroupBy(piece => piece.Activity.GroupLabel))
+        foreach (IGrouping<string, IDescribable> project in agentPieces.Where(piece => !HasOwnDescription(piece)).GroupBy(piece => piece.Activity.GroupLabel))
         {
-            foreach (Piece piece in project)
+            foreach (IDescribable piece in project)
             {
                 List<string> titles = AgentWork.Parts(piece.Activity)
                     .Where(title => !string.Equals(title, project.Key, StringComparison.OrdinalIgnoreCase))
@@ -479,14 +479,14 @@ public sealed class TimesheetBuilder
             }
         }
 
-        foreach (Piece piece in group.Where(piece => piece.Activity.Source != ActivitySource.Agent))
+        foreach (IDescribable piece in group.Where(piece => piece.Activity.Source != ActivitySource.Agent))
         {
             Add(piece, null, [piece.Description]);
         }
 
         return parts;
 
-        void Add(Piece piece, string? project, IReadOnlyList<string> texts)
+        void Add(IDescribable piece, string? project, IReadOnlyList<string> texts)
         {
             foreach (string text in texts)
             {
@@ -502,7 +502,7 @@ public sealed class TimesheetBuilder
         }
     }
 
-    private static bool HasOwnDescription(Piece piece) =>
+    private static bool HasOwnDescription(IDescribable piece) =>
         piece.Override?.Description is not null || piece.MappingRule?.DescriptionTemplate is { Length: > 0 };
 
     /// <summary>One line per workstream, like the Timesheet system's own rows: "portal: Fix login; Add tests".</summary>
@@ -619,12 +619,7 @@ public sealed class TimesheetBuilder
         }
         else
         {
-            List<Piece> ticked = entry.Where(piece => change?.Unticked.Contains(piece.Id) != true).ToList();
-            description = Describe(Parts(ticked.Count > 0 ? ticked : entry));
-            if (description.Length > TimesheetLine.MaxDescriptionLength)
-            {
-                description = description[..(TimesheetLine.MaxDescriptionLength - 1)] + "…";
-            }
+            description = EntryDescription(entry, change?.Unticked ?? []);
         }
 
         return new LineDraft($"line:{DayKey(entry[0].Date)}:entry:{entryId}", description, entry.Aggregate(TimeSpan.Zero, (total, piece) => total + piece.Counted), entry)
@@ -633,6 +628,38 @@ public sealed class TimesheetBuilder
             Location = Entries.LocationOf(entry.Select(piece => piece.Location.Name), entryOrder),
         };
     }
+
+    /// <summary>
+    /// Every message an entry of these activities could say, in the order it says them: each pull request title,
+    /// commit subject or session title under its project, and the description of anything else. A message several
+    /// activities share is listed once.
+    /// </summary>
+    public static IReadOnlyList<EntryTitle> EntryTitles(IEnumerable<ActivityResult> items) =>
+        Parts(items.OrderBy(item => item.Start).ToList())
+            .Select(part => new EntryTitle(Key(part), part.Project, part.Text, part.Time, part.Pieces.OfType<ActivityResult>().Select(item => item.PieceId).Distinct().ToList()))
+            .ToList();
+
+    /// <summary>
+    /// What an entry of these activities says when the user hasn't written its description: its ticked messages said
+    /// the way a line says them (all of them when none is ticked), shortened to fit. The entry editor previews it.
+    /// </summary>
+    public static string DescribeEntry(IEnumerable<ActivityResult> items, IEnumerable<string> unticked) =>
+        EntryDescription(items.OrderBy(item => item.Start).ToList(), unticked);
+
+    private static string EntryDescription(IReadOnlyList<IDescribable> entry, IEnumerable<string> unticked)
+    {
+        HashSet<string> left = new(unticked, StringComparer.OrdinalIgnoreCase);
+        List<DescriptionPart> parts = Parts(entry);
+        List<DescriptionPart> ticked = parts.Where(part => !left.Contains(Key(part))).ToList();
+        string description = Describe(ticked.Count > 0 ? ticked : parts);
+        return description.Length <= TimesheetLine.MaxDescriptionLength
+            ? description
+            : description[..(TimesheetLine.MaxDescriptionLength - 1)] + "…";
+    }
+
+    /// <summary>How a message is named when it is ticked or unticked: "portal: Fix filters", or the text alone.</summary>
+    private static string Key(DescriptionPart part) =>
+        part.Project is null ? part.Text : part.Text.Length == 0 ? part.Project : $"{part.Project}: {part.Text}";
 
     private static string DayKey(DateOnly date) => date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
@@ -650,7 +677,7 @@ public sealed class TimesheetBuilder
         public string? Project { get; } = project;
         public string Text { get; } = text;
         public TimeSpan Time { get; set; }
-        public List<Piece> Pieces { get; } = [];
+        public List<IDescribable> Pieces { get; } = [];
     }
 
     /// <summary>
@@ -826,7 +853,7 @@ public sealed class TimesheetBuilder
     private static bool IsLeave(TimesheetLine line, Dictionary<string, Category> categories) =>
         line.CategoryId is not null && categories.TryGetValue(line.CategoryId, out Category? category) && category.IsLeave;
 
-    private sealed class Piece(Activity activity, string id, DateOnly date, DateTime start, DateTime end, bool timed, TimeSpan raw)
+    private sealed class Piece(Activity activity, string id, DateOnly date, DateTime start, DateTime end, bool timed, TimeSpan raw) : IDescribable
     {
         public Activity Activity { get; } = activity;
         public string Id { get; } = id;

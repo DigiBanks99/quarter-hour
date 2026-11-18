@@ -100,7 +100,6 @@ public static class Entries
         }
 
         SetEntry(journal, item, null);
-        journal.Entries.GetValueOrDefault(entry)?.Unticked.Remove(item.PieceId);
         List<ActivityResult> rest = Members(entry, activities).Where(other => other.PieceId != item.PieceId).ToList();
         if (rest.Count(other => other.EntryId == entry) <= 1)
         {
@@ -120,6 +119,37 @@ public static class Entries
         foreach (string key in journal.Lines.Keys.Where(key => key.EndsWith($":entry:{entry}", StringComparison.Ordinal)).ToList())
         {
             journal.Lines.Remove(key);
+        }
+    }
+
+    /// <summary>
+    /// Saves how an entry is described: the messages that stay out (<see cref="EntryTitle.Key"/>), and the user's own
+    /// description (null or blank to use the ticked messages). A description written on the entry's line before is dropped, so this one
+    /// is what the timesheet says; the line's other changes, such as its ticket, are kept.
+    /// </summary>
+    public static void Describe(Journal journal, string entry, IEnumerable<string> unticked, string? description)
+    {
+        EntryOverride change = new()
+        {
+            Unticked = unticked.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
+        };
+        if (change.IsEmpty)
+        {
+            journal.Entries.Remove(entry);
+        }
+        else
+        {
+            journal.Entries[entry] = change;
+        }
+
+        foreach ((string key, LineOverride line) in journal.Lines.Where(pair => pair.Key.EndsWith($":entry:{entry}", StringComparison.Ordinal)).ToList())
+        {
+            line.Description = null;
+            if (line.IsEmpty)
+            {
+                journal.Lines.Remove(key);
+            }
         }
     }
 
