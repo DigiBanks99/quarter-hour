@@ -1,7 +1,9 @@
 @page "/day"
 @page "/day/{DateText}"
 @inherits PeriodPageBase
+@implements IAsyncDisposable
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
 @inject IDialogService Dialogs
 @inject ISnackbar Snackbar
 
@@ -87,6 +89,7 @@ else
             </MudPaper>
         </MudItem>
         <MudItem xs="12" lg="9">
+            <div @ref="_groupRoot">
             <MudPaper Class="qh-panel" Elevation="0">
                 <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" TabPanelsClass="pt-3" @bind-ActivePanelIndex="_tab">
                     <MudTabPanel Text="@($"Activities ({visible.Count})")">
@@ -103,15 +106,62 @@ else
                         }
                         else
                         {
+                            <div class="qh-group-bar">
+                                <span class="qh-group-hint qh-muted" data-group-hint="@GroupHint">@GroupHint</span>
+                                <div class="qh-group-out" data-target="out">Drop here to take it out of its entry</div>
+                            </div>
                             <div class="qh-table-wrap">
                                 <table class="qh-table qh-activities">
                                     <thead>
-                                        <tr><th>Time</th><th>Activity</th><th>Status</th><th>Category</th><th>Location</th><th class="qh-num">Time</th><th></th></tr>
+                                        <tr><th class="qh-col-handle"></th><th>Time</th><th>Activity</th><th>Status</th><th>Category</th><th>Location</th><th class="qh-num">Time</th><th></th></tr>
                                     </thead>
                                     <tbody>
-                                        @foreach (ActivityResult item in visible)
+                                        @foreach (ActivityRow row in Rows(visible))
                                         {
-                                            <tr class="@(item.PieceId == _selected ? "qh-row-selected" : "")" @onclick="() => _selected = item.PieceId">
+                                            @if (row.EntryId is { } entryId)
+                                            {
+                                                TimesheetLine? entryLine = lines.FirstOrDefault(line => line.EntryId == entryId);
+                                                bool open = _expanded.Contains(entryId);
+                                                <tr class="qh-entry-row" data-target="entry:@entryId" @key="@($"entry:{entryId}")">
+                                                    <td class="qh-col-handle">
+                                                        <MudIconButton Icon="@(open ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)" Size="Size.Small"
+                                                                       OnClick="() => ToggleEntry(entryId)" aria-label="@(open ? "Hide what's in this entry" : "Show what's in this entry")" aria-expanded="@(open ? "true" : "false")" />
+                                                    </td>
+                                                    <td class="qh-nowrap">@EntryTime(row.Members)</td>
+                                                    <td>
+                                                        <div class="qh-act-title" title="@entryLine?.Description"><MudIcon Icon="@Icons.Material.Outlined.Workspaces" Size="Size.Small" /> @FirstLine(entryLine?.Description)</div>
+                                                        <div class="qh-act-meta">Entry of @Ui.Plural(row.Members.Count, "activity", "activities") · @string.Join(", ", row.Members.Select(member => member.Activity.GroupLabel).Distinct())</div>
+                                                    </td>
+                                                    <td></td>
+                                                    <td class="qh-col-category"><CategoryLabel Category="CategoryOf(row.Members[0].CategoryId)" ShowGroup="false" /></td>
+                                                    <td class="qh-nowrap">
+                                                        @if (entryLine is not null)
+                                                        {
+                                                            <MudIcon Icon="@Ui.LocationIcon(entryLine.Location)" Size="Size.Small" Class="mr-1" Style="vertical-align:middle" />@entryLine.Location
+                                                        }
+                                                    </td>
+                                                    <td class="qh-num qh-nowrap">@Ui.Duration(row.Members.Aggregate(TimeSpan.Zero, (total, member) => total + member.Counted))</td>
+                                                    <td class="qh-nowrap qh-actions">
+                                                        <MudTooltip Text="Edit the entry's description">
+                                                            <MudIconButton Icon="@Icons.Material.Outlined.Edit" Size="Size.Small" OnClick="() => EditEntry(entryId)" aria-label="Edit the entry's description" />
+                                                        </MudTooltip>
+                                                        <MudTooltip Text="Break up this entry">
+                                                            <MudIconButton Icon="@Icons.Material.Outlined.LinkOff" Size="Size.Small" OnClick="() => BreakUp(entryId)" aria-label="Break up this entry" />
+                                                        </MudTooltip>
+                                                    </td>
+                                                </tr>
+                                                continue;
+                                            }
+
+                                            ActivityResult item = row.Item!;
+                                            List<GroupTarget> targets = Targets(item, visible);
+                                            <tr class="@RowClass(item)" data-target="piece:@item.PieceId" @key="item.PieceId" @onclick="() => _selected = item.PieceId">
+                                                <td class="qh-col-handle">
+                                                    @if (targets.Count > 0)
+                                                    {
+                                                        <span class="qh-drag" draggable="true" data-source="@item.PieceId" title="Drag onto other work to group them"><MudIcon Icon="@Icons.Material.Filled.DragIndicator" Size="Size.Small" /></span>
+                                                    }
+                                                </td>
                                                 <td class="qh-nowrap">@(item.Activity.IsTimed ? $"{Ui.Time(item.Start)}–{Ui.Time(item.End)}" : item.Activity.IsAllDay ? "All day" : "—")</td>
                                                 <td>
                                                     <div class="qh-act-title"><MudIcon Icon="@Ui.SourceIcon(item.Activity.Source)" Size="Size.Small" /> @item.Description</div>
@@ -158,6 +208,15 @@ else
                                                     }
                                                 </td>
                                                 <td class="qh-nowrap qh-actions">
+                                                    @if (targets.Count > 0)
+                                                    {
+                                                        <MudMenu Icon="@Icons.Material.Outlined.Workspaces" Size="Size.Small" Dense="true" MaxHeight="360" AriaLabel="Group with…" title="Group with…">
+                                                            @foreach (GroupTarget target in targets)
+                                                            {
+                                                                <MudMenuItem OnClick="() => OnGroup(item.PieceId, target.Key)">@target.Label</MudMenuItem>
+                                                            }
+                                                        </MudMenu>
+                                                    }
                                                     @if (item.Activity.Source == ActivitySource.Manual)
                                                     {
                                                         <MudTooltip Text="Delete this manual entry">
@@ -282,6 +341,7 @@ else
                     </MudTabPanel>
                 </MudTabs>
             </MudPaper>
+            </div>
 
             <MudPaper Class="qh-panel mt-3" Elevation="0">
                 <MudText Typo="Typo.h6" Class="mb-2">Add a manual entry</MudText>
@@ -427,26 +487,292 @@ else
 
     private void Unsplit(TimesheetLine line, List<ActivityResult> all)
     {
-        List<ActivityResult> items = ItemsOf(line, all);
-        Workspace.UpdateJournal(journal =>
+        if (line.EntryId is { } entryId)
         {
-            foreach (ActivityResult item in items)
+            BreakUp(entryId);
+        }
+    }
+
+    // ── Grouping activities into entries ──────────────────────────────────────────────────────────────────────
+
+    private const string OutTarget = "out";
+    private const string GroupHint = "Drag work by its handle onto other work of the same category to log them as one entry.";
+
+    private ElementReference _groupRoot;
+    private string? _groupRootId;
+    private IJSObjectReference? _module;
+    private IJSObjectReference? _grouping;
+    private DotNetObjectReference<Day>? _self;
+    private readonly HashSet<string> _expanded = new(StringComparer.Ordinal);
+
+    private IReadOnlyList<string> EntryOrder => Config.Locations.EntryOrder;
+
+    /// <summary>A row of the Activities table: an entry (with its activities), or one activity.</summary>
+    private sealed record ActivityRow(ActivityResult? Item, string? EntryId, List<ActivityResult> Members);
+
+    /// <summary>Where an activity can go: another activity, an entry, or out of its own entry.</summary>
+    private sealed record GroupTarget(string Key, string Label)
+    {
+        public bool IsOut => Key == OutTarget;
+    }
+
+    private List<ActivityResult> Visible() => Sheet is null
+        ? []
+        : Sheet.Activities.Where(item => item.Date == _date && (_showHidden || item.IsCounting)).ToList();
+
+    /// <summary>The activities in time order, an entry standing in for its activities where its first one would be.</summary>
+    private List<ActivityRow> Rows(List<ActivityResult> visible)
+    {
+        List<ActivityRow> rows = [];
+        HashSet<string> shown = new(StringComparer.Ordinal);
+        foreach (ActivityResult item in visible)
+        {
+            if (item.EntryId is not { } entry)
             {
-                foreach (string key in new[] { item.PieceId, item.Activity.Id })
+                rows.Add(new ActivityRow(item, null, []));
+                continue;
+            }
+
+            if (!shown.Add(entry))
+            {
+                continue;
+            }
+
+            List<ActivityResult> members = visible.Where(other => other.EntryId == entry).ToList();
+            rows.Add(new ActivityRow(null, entry, members));
+            if (_expanded.Contains(entry))
+            {
+                rows.AddRange(members.Select(member => new ActivityRow(member, null, [])));
+            }
+        }
+
+        return rows;
+    }
+
+    private List<GroupTarget> Targets(ActivityResult item, List<ActivityResult> visible)
+    {
+        List<GroupTarget> targets = [];
+        if (Entries.WhyNot(item, EntryOrder) is not null)
+        {
+            return targets;
+        }
+
+        if (item.EntryId is not null)
+        {
+            targets.Add(new GroupTarget(OutTarget, "Take out of its entry"));
+        }
+
+        foreach (IGrouping<string, ActivityResult> entry in visible.Where(other => other.EntryId is not null && other.EntryId != item.EntryId).GroupBy(other => other.EntryId!))
+        {
+            if (Entries.WhyNotTogether(item, entry.First(), EntryOrder) is null)
+            {
+                targets.Add(new GroupTarget($"entry:{entry.Key}", $"Entry: {FirstLine(EntryLine(entry.Key)?.Description)}"));
+            }
+        }
+
+        foreach (ActivityResult other in visible.Where(other => other.EntryId is null && other.PieceId != item.PieceId))
+        {
+            if (Entries.WhyNotTogether(item, other, EntryOrder) is null)
+            {
+                targets.Add(new GroupTarget($"piece:{other.PieceId}", $"{TimeText(other)} {other.Description}"));
+            }
+        }
+
+        return targets;
+    }
+
+    /// <summary>For each activity that can be dragged: the rows it may be dropped on, and why each other row refuses.</summary>
+    private (Dictionary<string, List<string>> Allowed, Dictionary<string, Dictionary<string, string>> Reasons) GroupingMap()
+    {
+        List<ActivityResult> visible = Visible();
+        Dictionary<string, List<string>> allowed = [];
+        Dictionary<string, Dictionary<string, string>> reasons = [];
+        foreach (ActivityResult item in visible)
+        {
+            List<GroupTarget> targets = Targets(item, visible);
+            if (targets.Count == 0)
+            {
+                continue;
+            }
+
+            List<string> keys = targets.Select(target => target.Key).ToList();
+            keys.AddRange(targets
+                .Where(target => target.Key.StartsWith("entry:", StringComparison.Ordinal))
+                .SelectMany(target => visible.Where(other => other.EntryId == target.Key["entry:".Length..]).Select(other => $"piece:{other.PieceId}")));
+            allowed[item.PieceId] = keys;
+
+            Dictionary<string, string> why = [];
+            foreach (ActivityResult other in visible.Where(other => other.PieceId != item.PieceId && !keys.Contains($"piece:{other.PieceId}")))
+            {
+                string reason = other.EntryId is not null && other.EntryId == item.EntryId
+                    ? "it's already in this entry"
+                    : Entries.WhyNotTogether(item, other, EntryOrder) ?? "";
+                why[$"piece:{other.PieceId}"] = Lower(reason);
+                if (other.EntryId is { } entry && !keys.Contains($"entry:{entry}"))
                 {
-                    if (journal.Overrides.GetValueOrDefault(key) is { } current)
-                    {
-                        current.Entry = null;
-                    }
+                    why[$"entry:{entry}"] = Lower(reason);
                 }
             }
 
-            journal.Lines.Remove(line.Id);
-            if (line.EntryId is { } entryId)
+            reasons[item.PieceId] = why;
+        }
+
+        return (allowed, reasons);
+
+        static string Lower(string reason) => reason.Length == 0 ? reason : char.ToLowerInvariant(reason[0]) + reason[1..];
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Sheet is null || _groupRoot.Id is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (_grouping is null || _groupRootId != _groupRoot.Id)
             {
-                journal.Entries.Remove(entryId);
+                if (_grouping is not null)
+                {
+                    await _grouping.InvokeVoidAsync("dispose");
+                    await _grouping.DisposeAsync();
+                }
+
+                _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/day-entries.js");
+                _self ??= DotNetObjectReference.Create(this);
+                _grouping = await _module.InvokeAsync<IJSObjectReference>("create", _groupRoot, _self);
+                _groupRootId = _groupRoot.Id;
             }
-        });
+
+            (Dictionary<string, List<string>> allowed, Dictionary<string, Dictionary<string, string>> reasons) = GroupingMap();
+            await _grouping.InvokeVoidAsync("set", allowed, reasons);
+        }
+        catch (JSDisconnectedException)
+        {
+            // The browser tab is already gone.
+        }
+    }
+
+    [JSInvokable]
+    public Task OnGroup(string source, string target)
+    {
+        if (Sheet is null || Sheet.Activities.FirstOrDefault(item => item.PieceId == source) is not { } item)
+        {
+            return Task.CompletedTask;
+        }
+
+        if (target == OutTarget)
+        {
+            TakeOut(item);
+            return Task.CompletedTask;
+        }
+
+        ActivityResult? other = target.StartsWith("entry:", StringComparison.Ordinal)
+            ? Sheet.Activities.FirstOrDefault(candidate => candidate.EntryId == target["entry:".Length..])
+            : Sheet.Activities.FirstOrDefault(candidate => $"piece:{candidate.PieceId}" == target);
+        if (other is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        if (Entries.WhyNotTogether(item, other, EntryOrder) is { } reason)
+        {
+            Snackbar.Add($"Can't group these: {Lower(reason)}.", Severity.Warning);
+            return Task.CompletedTask;
+        }
+
+        IReadOnlyList<ActivityResult> activities = Sheet.Activities;
+        string? entry = null;
+        Workspace.UpdateJournal(journal => entry = Entries.Join(journal, item, other, activities));
+        if (entry is not null)
+        {
+            _expanded.Add(entry);
+        }
+
+        Snackbar.Add(other.EntryId is null ? "Grouped into one entry." : "Added to the entry.", Severity.Success);
+        return Task.CompletedTask;
+
+        static string Lower(string text) => char.ToLowerInvariant(text[0]) + text[1..];
+    }
+
+    private void TakeOut(ActivityResult item)
+    {
+        if (Sheet is null)
+        {
+            return;
+        }
+
+        IReadOnlyList<ActivityResult> activities = Sheet.Activities;
+        Workspace.UpdateJournal(journal => Entries.TakeOut(journal, item, activities));
+        Snackbar.Add("Taken out of its entry.", Severity.Info);
+    }
+
+    private void BreakUp(string entryId)
+    {
+        if (Sheet is null)
+        {
+            return;
+        }
+
+        IReadOnlyList<ActivityResult> activities = Sheet.Activities;
+        Workspace.UpdateJournal(journal => Entries.BreakUp(journal, entryId, activities));
+        _expanded.Remove(entryId);
+        Snackbar.Add("Entry broken up; its work is back on its usual lines.", Severity.Info);
+    }
+
+    private void ToggleEntry(string entryId)
+    {
+        if (!_expanded.Remove(entryId))
+        {
+            _expanded.Add(entryId);
+        }
+    }
+
+    /// <summary>Until the entry editor (#27) lands, an entry's description is edited on its line.</summary>
+    private void EditEntry(string entryId) => _tab = 1;
+
+    private TimesheetLine? EntryLine(string entryId) => Sheet?.Lines.FirstOrDefault(line => line.EntryId == entryId);
+
+    private string RowClass(ActivityResult item) => string.Join(" ", new[]
+    {
+        item.PieceId == _selected ? "qh-row-selected" : null,
+        item.EntryId is not null ? "qh-entry-member" : null,
+    }.OfType<string>());
+
+    private static string TimeText(ActivityResult item) => item.Activity.IsTimed ? $"{Ui.Time(item.Start)}–{Ui.Time(item.End)}" : "—";
+
+    private static string EntryTime(List<ActivityResult> members)
+    {
+        List<ActivityResult> timed = members.Where(member => member.Activity.IsTimed).ToList();
+        return timed.Count == 0 ? "—" : $"{Ui.Time(timed.Min(member => member.Start))}–{Ui.Time(timed.Max(member => member.End))}";
+    }
+
+    private static string FirstLine(string? description) =>
+        string.IsNullOrWhiteSpace(description) ? "Entry" : description.Split('\n')[0];
+
+    public async ValueTask DisposeAsync()
+    {
+        Dispose();
+        try
+        {
+            if (_grouping is not null)
+            {
+                await _grouping.InvokeVoidAsync("dispose");
+                await _grouping.DisposeAsync();
+            }
+
+            if (_module is not null)
+            {
+                await _module.DisposeAsync();
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+            // The browser tab is already gone.
+        }
+
+        _self?.Dispose();
     }
 
     /// <summary>Only keep a description the user actually changed.</summary>
