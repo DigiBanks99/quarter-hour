@@ -75,7 +75,10 @@ public sealed class CandidateOverride
 /// <summary>How an entry is described: the titles left out of its description, or a description of its own.</summary>
 public sealed class EntryOverride
 {
-    /// <summary>Activities (piece ids) whose titles stay out of the description. Their time still counts.</summary>
+    /// <summary>
+    /// The messages that stay out of the description (each <see cref="Timesheets.EntryTitle.Key"/>, such as
+    /// "portal: Fix filters"). The time of the work behind them still counts.
+    /// </summary>
     public List<string> Unticked { get; set; } = [];
 
     /// <summary>Replaces the description made from the ticked titles.</summary>
