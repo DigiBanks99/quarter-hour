@@ -152,8 +152,26 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: .85em; padd
 .qh-fill { display: flex; gap: 8px; align-items: center; min-width: 360px; }
 .qh-act-title { display: flex; align-items: center; gap: 6px; font-weight: 500; }
 .qh-act-meta { font-size: .78rem; color: var(--mud-palette-text-secondary); margin-left: 26px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 300px; }
-.qh-activities td:nth-child(2) { min-width: 200px; max-width: 320px; }
-.qh-act-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
+.qh-activities td:nth-child(3) { min-width: 200px; max-width: 290px; }
+
+/* Grouping activities into entries on the Day page (see js/day-entries.js). */
+.qh-activities .qh-col-handle { width: 24px; padding-left: 0; padding-right: 0; }
+.qh-drag { display: inline-flex; cursor: grab; color: var(--mud-palette-text-secondary); padding: 4px 2px; border-radius: 4px; }
+.qh-drag:hover { color: var(--mud-palette-primary); background: color-mix(in srgb, var(--mud-palette-primary) 8%, transparent); }
+.qh-drag:active { cursor: grabbing; }
+.qh-entry-row { background: color-mix(in srgb, var(--mud-palette-primary) 5%, transparent); }
+.qh-entry-row .qh-act-title { font-weight: 600; }
+.qh-entry-member td:nth-child(3) { padding-left: 22px; border-left: 3px solid color-mix(in srgb, var(--mud-palette-primary) 35%, transparent); }
+.qh-group-bar { display: flex; align-items: center; gap: 12px; min-height: 32px; margin-bottom: 4px; font-size: .82rem; }
+.qh-group-out { display: none; padding: 6px 14px; border: 2px dashed var(--mud-palette-lines-default); border-radius: 6px; margin-left: auto; }
+.qh-grouping-member .qh-group-out { display: block; }
+.qh-grouping .qh-group-out.qh-group-on { border-color: var(--mud-palette-primary); color: var(--mud-palette-primary); }
+.qh-grouping .qh-group-hint { color: var(--mud-palette-text-primary); }
+.qh-grouping tr.qh-group-off { opacity: .35; }
+.qh-grouping tr.qh-group-on { outline: 1px dashed color-mix(in srgb, var(--mud-palette-primary) 45%, transparent); outline-offset: -1px; }
+.qh-grouping .qh-group-over { outline: 2px solid var(--mud-palette-primary) !important; outline-offset: -2px;
+    background: color-mix(in srgb, var(--mud-palette-primary) 10%, var(--mud-palette-surface)); }
+.qh-act-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 290px; }
 .qh-activities td, .qh-activities th { padding-left: 6px; padding-right: 6px; }
 .qh-activities td { padding-top: 4px; padding-bottom: 4px; }
 .qh-col-category { min-width: 180px; max-width: 210px; }

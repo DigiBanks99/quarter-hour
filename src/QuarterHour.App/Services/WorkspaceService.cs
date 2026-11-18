@@ -158,6 +158,11 @@ public sealed class WorkspaceService
                 _journal.Candidates.Remove(key);
             }
 
+            foreach (string key in _journal.Entries.Where(pair => pair.Value.IsEmpty).Select(pair => pair.Key).ToList())
+            {
+                _journal.Entries.Remove(key);
+            }
+
             _store.SaveJournal(_journal);
         }
 
