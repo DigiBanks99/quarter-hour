@@ -1,0 +1,173 @@
+@inject WorkspaceService Workspace
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Describe this entry</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="qh-muted mb-2">
+            Tick the messages the description should keep. The work behind an unticked message still counts its time.
+        </MudText>
+        <div class="qh-entry-checklist">
+            @foreach (IGrouping<string?, EntryTitle> project in Titles.GroupBy(title => title.Project))
+            {
+                <div class="qh-entry-check-group">
+                    <span>@(project.Key ?? "Other work")</span>
+                    @if (project.Count() > 1)
+                    {
+                        bool all = project.All(title => !_unticked.Contains(title.Key));
+                        <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="() => SetAll(project, !all)">@(all ? "Untick all" : "Tick all")</MudButton>
+                    }
+                </div>
+                @foreach (EntryTitle title in project)
+                {
+                    bool ticked = !_unticked.Contains(title.Key);
+                    <div class="qh-entry-check @(ticked ? "" : "qh-unticked")" @onclick="() => Toggle(title.Key)" title="@From(title)">
+                        <span @onclick:stopPropagation="true">
+                            <MudCheckBox T="bool" Value="@ticked" ValueChanged="_ => Toggle(title.Key)" Size="Size.Small" Dense="true" aria-label="@($"Keep {title.Key}")" />
+                        </span>
+                        <span class="qh-entry-check-title">
+                            <MudIcon Icon="@Ui.SourceIcon(SourceOf(title))" Size="Size.Small" />
+                            @(title.Text.Length > 0 ? title.Text : title.Project)
+                        </span>
+                        <span class="qh-nowrap qh-muted qh-entry-check-from">@From(title)</span>
+                        <span class="qh-num qh-nowrap qh-muted">@Ui.Duration(title.Time)</span>
+                    </div>
+                }
+            }
+        </div>
+        @if (Titles.All(title => _unticked.Contains(title.Key)))
+        {
+            <MudText Typo="Typo.caption" Class="qh-warn-text">Nothing is ticked, so every message is used.</MudText>
+        }
+
+        <div class="qh-entry-preview-head">
+            <MudText Typo="Typo.subtitle2">On the timesheet</MudText>
+            <span class="@(Preview.Length > TimesheetLine.MaxDescriptionLength ? "qh-warn-text" : "qh-muted")">
+                @Preview.Length / @TimesheetLine.MaxDescriptionLength characters
+            </span>
+        </div>
+        <div class="qh-entry-preview">@Preview</div>
+        @if (Preview.Length > TimesheetLine.MaxDescriptionLength)
+        {
+            <MudText Typo="Typo.caption" Class="qh-warn-text">
+                The Timesheet system's upload takes @TimesheetLine.MaxDescriptionLength characters at most. It can still be saved.
+            </MudText>
+        }
+
+        <div class="qh-entry-override">
+            @if (!_overriding)
+            {
+                <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Outlined.EditNote" OnClick="StartOverride">Override description</MudButton>
+            }
+            else
+            {
+                <div class="qh-entry-preview-head">
+                    <MudText Typo="Typo.subtitle2">Override description</MudText>
+                    <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="StopOverride">Use the ticked titles</MudButton>
+                </div>
+                <MudTextField T="string" @bind-Value="_override" Variant="Variant.Outlined" Lines="5" Immediate="true" AutoFocus="true"
+                              Placeholder="Leave empty to use the ticked titles" aria-label="Override description" />
+            }
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => Dialog.Cancel()">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Save">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    [Parameter, EditorRequired] public string EntryId { get; set; } = "";
+
+    /// <summary>The entry's activities, in time order.</summary>
+    [Parameter, EditorRequired] public IReadOnlyList<ActivityResult> Items { get; set; } = [];
+
+    /// <summary>How the entry is described now.</summary>
+    [Parameter] public EntryOverride? Current { get; set; }
+
+    private readonly HashSet<string> _unticked = new(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyList<EntryTitle> Titles { get; set; } = [];
+    private bool _overriding;
+    private string? _override;
+
+    /// <summary>What the ticked messages say, as the timesheet line would say it.</summary>
+    private string Generated => TimesheetBuilder.DescribeEntry(Items, _unticked);
+
+    private bool UsingOwnWords => _overriding && !string.IsNullOrWhiteSpace(_override);
+
+    private string Preview => UsingOwnWords ? _override!.Trim() : Generated;
+
+    protected override void OnInitialized()
+    {
+        Titles = TimesheetBuilder.EntryTitles(Items);
+        if (Current is null)
+        {
+            return;
+        }
+
+        // Messages no longer said (their commit or activity left the entry) are forgotten when saved.
+        _unticked.UnionWith(Current.Unticked.Where(key => Titles.Any(title => string.Equals(title.Key, key, StringComparison.OrdinalIgnoreCase))));
+        if (!string.IsNullOrWhiteSpace(Current.Description))
+        {
+            _overriding = true;
+            _override = Current.Description;
+        }
+    }
+
+    private void Toggle(string key)
+    {
+        if (!_unticked.Remove(key))
+        {
+            _unticked.Add(key);
+        }
+    }
+
+    private void SetAll(IEnumerable<EntryTitle> titles, bool ticked)
+    {
+        foreach (EntryTitle title in titles)
+        {
+            if (ticked)
+            {
+                _unticked.Remove(title.Key);
+            }
+            else
+            {
+                _unticked.Add(title.Key);
+            }
+        }
+    }
+
+    private ActivitySource SourceOf(EntryTitle title) =>
+        Items.FirstOrDefault(item => title.PieceIds.Contains(item.PieceId))?.Activity.Source ?? ActivitySource.Agent;
+
+    /// <summary>When the work behind a message was done, such as "09:00–10:00, 13:00–13:30".</summary>
+    private string From(EntryTitle title) =>
+        string.Join(", ", Items.Where(item => title.PieceIds.Contains(item.PieceId)).Select(TimeText));
+
+    private void StartOverride()
+    {
+        _overriding = true;
+        _override = string.IsNullOrWhiteSpace(_override) ? Generated : _override;
+    }
+
+    private void StopOverride()
+    {
+        _overriding = false;
+        _override = null;
+    }
+
+    private void Save()
+    {
+        // Words left exactly as the ticked titles say them aren't the user's own: keep following the ticks.
+        string? description = UsingOwnWords && _override!.Trim() != Generated ? _override : null;
+        List<string> unticked = [.. _unticked];
+        Workspace.UpdateJournal(journal => Entries.Describe(journal, EntryId, unticked, description));
+        Dialog.Close(DialogResult.Ok(true));
+    }
+
+    private static string TimeText(ActivityResult item) =>
+        item.Activity.IsTimed ? $"{Ui.Time(item.Start)}–{Ui.Time(item.End)}" : "—";
+}
