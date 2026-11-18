@@ -417,7 +417,7 @@ else
     private static List<ActivityResult> ItemsOf(TimesheetLine line, List<ActivityResult> all) =>
         all.Where(item => line.PieceIds.Contains(item.PieceId)).ToList();
 
-    private static bool IsEntry(TimesheetLine line) => line.Id.Contains(":entry:", StringComparison.Ordinal);
+    private static bool IsEntry(TimesheetLine line) => line.EntryId is not null;
 
     private async Task SplitAsync(TimesheetLine line, List<ActivityResult> all)
     {
@@ -442,6 +442,10 @@ else
             }
 
             journal.Lines.Remove(line.Id);
+            if (line.EntryId is { } entryId)
+            {
+                journal.Entries.Remove(entryId);
+            }
         });
     }
 

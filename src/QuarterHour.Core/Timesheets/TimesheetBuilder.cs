@@ -54,7 +54,7 @@ public sealed class TimesheetBuilder
             piece.Description = DescriptionFor(piece);
         }
 
-        List<TimesheetLine> lines = BuildLines(pieces, config.Rounding, config.Export.DefaultSentiment);
+        List<TimesheetLine> lines = BuildLines(pieces, config.Rounding, config.Export.DefaultSentiment, journal, config.Locations.EntryOrder);
         lines = TopUp(lines, pieces, config, categories, workCalendar, dayLocations, today);
         lines = ApplyLineOverrides(lines, journal);
         List<ActivityResult> results = pieces
@@ -334,12 +334,19 @@ public sealed class TimesheetBuilder
     /// Time is added up and rounded per meeting, or per day, category and location for agent work (or for everything,
     /// when rounding the daily total). That rounded time is then shared between the lines it is written as: one per
     /// project for agent work, and more when a description would outgrow <see cref="TimesheetLine.MaxDescriptionLength"/>.
-    /// Blocks the user grouped into an entry of their own (<see cref="ActivityOverride.Entry"/>) leave their day's line
-    /// and are rounded as an entry of their own.
+    /// Activities the user grouped into an entry (<see cref="ActivityOverride.Entry"/>) leave their usual lines first and
+    /// are written as one line per entry, rounded on its own.
     /// </summary>
-    private static List<TimesheetLine> BuildLines(List<Piece> pieces, RoundingSettings rounding, string sentiment)
+    private static List<TimesheetLine> BuildLines(List<Piece> pieces, RoundingSettings rounding, string sentiment, Journal journal, IReadOnlyList<string> entryOrder)
     {
         List<Piece> counting = pieces.Where(piece => piece.IsCounting).OrderBy(piece => piece.Start).ToList();
+        List<(List<Piece> Pieces, List<LineDraft> Drafts)> rounded = [];
+        foreach (List<Piece> entry in GroupEntries(counting, entryOrder))
+        {
+            rounded.Add((entry, [EntryDraft(entry, journal, entryOrder)]));
+        }
+
+        counting = counting.Where(piece => piece.EntryId is null).ToList();
         bool dailyTotals = rounding.Scope == RoundingScope.DailyTotalPerCategory;
         List<List<Piece>> groups = [];
         if (dailyTotals)
@@ -357,7 +364,6 @@ public sealed class TimesheetBuilder
                 .Select(group => group.ToList()));
         }
 
-        List<(List<Piece> Pieces, List<LineDraft> Drafts)> rounded = [];
         foreach (List<Piece> group in groups)
         {
             Piece first = group[0];
@@ -367,19 +373,10 @@ public sealed class TimesheetBuilder
                 continue;
             }
 
-            string id = $"line:{first.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}:{(group.All(piece => piece.Activity.Source == ActivitySource.Agent) ? "agent" : "all")}:{first.CategoryId ?? "unmapped"}:{first.Location.Name}";
-            List<Piece> rest = group.Where(piece => piece.Override?.Entry is null).ToList();
-            if (rest.Count > 0)
-            {
-                rounded.Add((rest, dailyTotals
-                    ? Drafts(id, rest)
-                    : rest.GroupBy(piece => piece.Activity.GroupLabel).SelectMany(project => Drafts($"{id}:{project.Key}", project.ToList())).ToList()));
-            }
-
-            foreach (IGrouping<string, Piece> entry in group.Where(piece => piece.Override?.Entry is not null).GroupBy(piece => piece.Override!.Entry!))
-            {
-                rounded.Add((entry.ToList(), Drafts($"{id}:entry:{entry.Key}", entry.ToList())));
-            }
+            string id = $"line:{DayKey(first.Date)}:{(group.All(piece => piece.Activity.Source == ActivitySource.Agent) ? "agent" : "all")}:{first.CategoryId ?? "unmapped"}:{first.Location.Name}";
+            rounded.Add((group, dailyTotals
+                ? Drafts(id, group)
+                : group.GroupBy(piece => piece.Activity.GroupLabel).SelectMany(project => Drafts($"{id}:{project.Key}", project.ToList())).ToList()));
         }
 
         List<TimesheetLine> lines = [];
@@ -395,9 +392,10 @@ public sealed class TimesheetBuilder
                 TimesheetLine line = new()
                 {
                     Id = draft.Id,
+                    EntryId = draft.EntryId,
                     Date = first.Date,
                     CategoryId = first.CategoryId,
-                    Location = first.Location.Name,
+                    Location = draft.Location ?? first.Location.Name,
                     Description = draft.Description,
                     Source = draft.Pieces.Select(piece => piece.Activity.Source).Distinct().Count() == 1 ? draft.Pieces[0].Activity.Source : null,
                     Raw = draft.Raw,
@@ -575,7 +573,76 @@ public sealed class TimesheetBuilder
         return shares;
     }
 
-    private sealed record LineDraft(string Id, string Description, TimeSpan Raw, List<Piece> Pieces);
+    /// <summary>
+    /// The entries of each day: the activities sharing an <see cref="ActivityOverride.Entry"/> that may be grouped. An
+    /// entry keeps the category with the most time; an activity of another category, or one that can't be grouped any
+    /// more (left out, unmapped, moved to a location that can't be grouped), goes back to its usual line.
+    /// </summary>
+    private static List<List<Piece>> GroupEntries(List<Piece> counting, IReadOnlyList<string> entryOrder)
+    {
+        List<List<Piece>> entries = [];
+        IEnumerable<IGrouping<(DateOnly Date, string Entry), Piece>> grouped = counting
+            .Where(piece => piece.Override?.Entry is { Length: > 0 }
+                && Entries.WhyNot(piece.Activity.Source, piece.IsCounting, piece.CategoryId, piece.Location.Name, entryOrder) is null)
+            .GroupBy(piece => (piece.Date, piece.Override!.Entry!));
+        foreach (IGrouping<(DateOnly Date, string Entry), Piece> group in grouped)
+        {
+            string categoryId = group
+                .GroupBy(piece => piece.CategoryId!)
+                .OrderByDescending(category => category.Aggregate(TimeSpan.Zero, (total, piece) => total + piece.Counted))
+                .ThenBy(category => category.Min(piece => piece.Start))
+                .First().Key;
+            List<Piece> members = group.Where(piece => piece.CategoryId == categoryId).ToList();
+            foreach (Piece piece in members)
+            {
+                piece.EntryId = group.Key.Entry;
+            }
+
+            entries.Add(members);
+        }
+
+        return entries;
+    }
+
+    /// <summary>
+    /// An entry's one line. Its description is the user's own, or the ticked activities said the way a line says them
+    /// (all of them when none is ticked); it is never split, only shortened to fit.
+    /// </summary>
+    private static LineDraft EntryDraft(List<Piece> entry, Journal journal, IReadOnlyList<string> entryOrder)
+    {
+        string entryId = entry[0].EntryId!;
+        EntryOverride? change = journal.Entries.GetValueOrDefault(entryId);
+        string description;
+        if (!string.IsNullOrWhiteSpace(change?.Description))
+        {
+            description = change.Description.Trim();
+        }
+        else
+        {
+            List<Piece> ticked = entry.Where(piece => change?.Unticked.Contains(piece.Id) != true).ToList();
+            description = Describe(Parts(ticked.Count > 0 ? ticked : entry));
+            if (description.Length > TimesheetLine.MaxDescriptionLength)
+            {
+                description = description[..(TimesheetLine.MaxDescriptionLength - 1)] + "…";
+            }
+        }
+
+        return new LineDraft($"line:{DayKey(entry[0].Date)}:entry:{entryId}", description, entry.Aggregate(TimeSpan.Zero, (total, piece) => total + piece.Counted), entry)
+        {
+            EntryId = entryId,
+            Location = Entries.LocationOf(entry.Select(piece => piece.Location.Name), entryOrder),
+        };
+    }
+
+    private static string DayKey(DateOnly date) => date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    private sealed record LineDraft(string Id, string Description, TimeSpan Raw, List<Piece> Pieces)
+    {
+        public string? EntryId { get; init; }
+
+        /// <summary>Where the line is logged, when not where its first activity was (an entry's chosen location).</summary>
+        public string? Location { get; init; }
+    }
 
     /// <summary>One thing a description says, such as a commit subject under its project, and the time behind it.</summary>
     private sealed class DescriptionPart(string? project, string text)
@@ -655,7 +722,7 @@ public sealed class TimesheetBuilder
             return lines;
         }
 
-        return lines.Select(line => journal.Lines.TryGetValue(line.Id, out LineOverride? change) && !change.IsEmpty
+        return lines.Select(line => FindLineOverride(line, journal) is { IsEmpty: false } change
             ? line with
             {
                 Description = string.IsNullOrWhiteSpace(change.Description) ? line.Description : change.Description.Trim(),
@@ -665,6 +732,27 @@ public sealed class TimesheetBuilder
                 Override = change,
             }
             : line).ToList();
+    }
+
+    /// <summary>
+    /// A line's changes. An entry's line used to be named after the category and location it was split from
+    /// ("line:&lt;day&gt;:agent:&lt;category&gt;:&lt;location&gt;:entry:&lt;id&gt;"), so changes saved under that name still apply.
+    /// </summary>
+    private static LineOverride? FindLineOverride(TimesheetLine line, Journal journal)
+    {
+        if (journal.Lines.TryGetValue(line.Id, out LineOverride? change))
+        {
+            return change;
+        }
+
+        if (line.EntryId is not { } entryId)
+        {
+            return null;
+        }
+
+        string prefix = $"line:{DayKey(line.Date)}:";
+        string suffix = $":entry:{entryId}";
+        return journal.Lines.FirstOrDefault(pair => pair.Key.StartsWith(prefix, StringComparison.Ordinal) && pair.Key.EndsWith(suffix, StringComparison.Ordinal)).Value;
     }
 
     private static DaySummary Summarise(DateOnly day, WorkCalendar workCalendar, ResolvedLocation location, List<TimesheetLine> lines,
@@ -757,6 +845,10 @@ public sealed class TimesheetBuilder
         public ResolvedLocation Location { get; set; } = new("", LocationOrigin.Default);
         public string Description { get; set; } = "";
         public string? LineId { get; set; }
+
+        /// <summary>The entry it is logged in, once it qualified for the one it was grouped into.</summary>
+        public string? EntryId { get; set; }
+
         public string? Note { get; set; }
 
         public bool IsCounting => Status is ActivityStatus.Counted or ActivityStatus.Unmapped;
@@ -779,6 +871,7 @@ public sealed class TimesheetBuilder
             OverlappedBy = OverlappedBy,
             Override = Override,
             LineId = LineId,
+            EntryId = EntryId,
             Note = Note,
         };
     }

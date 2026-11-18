@@ -16,6 +16,10 @@ _Avoid_: Chat, run, conversation
 An unbroken stretch of one agent session's activity, ended by a pause longer than the idle gap. Each block is one agent activity.
 _Avoid_: Chunk, segment, burst
 
+**Entry**:
+Agent blocks and manual entries of one day and category that the user grouped to log as one timesheet line, rounded on its own and described by the titles they tick or in their own words. Meetings never join one, and neither does work at a location outside the entry order (Entelect, then Client, then Home), which also picks the entry's location.
+_Avoid_: Group (reserved for mapping), bundle, merge
+
 **Manual entry**:
 Time the user adds by hand because no source saw it.
 _Avoid_: Custom entry, adjustment
