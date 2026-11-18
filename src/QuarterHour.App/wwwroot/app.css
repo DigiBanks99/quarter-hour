@@ -165,6 +165,21 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: .85em; padd
 .qh-group-bar { display: flex; align-items: center; gap: 12px; min-height: 32px; margin-bottom: 4px; font-size: .82rem; }
 .qh-group-out { display: none; padding: 6px 14px; border: 2px dashed var(--mud-palette-lines-default); border-radius: 6px; margin-left: auto; }
 .qh-grouping-member .qh-group-out { display: block; }
+.qh-entry-checklist { display: flex; flex-direction: column; border: 1px solid var(--mud-palette-lines-default); border-radius: 6px; max-height: 320px; overflow-y: auto; }
+.qh-entry-check { display: grid; grid-template-columns: auto 1fr auto 56px; align-items: center; gap: 8px; padding: 2px 12px 2px 4px; cursor: pointer; }
+.qh-entry-check-from { font-size: .78rem; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.qh-entry-check-group { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px 2px; font-size: .78rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .03em; color: var(--mud-palette-text-secondary); border-top: 1px solid var(--mud-palette-lines-default); }
+.qh-entry-check-group:first-child { border-top: none; }
+.qh-entry-check + .qh-entry-check { border-top: 1px solid var(--mud-palette-lines-default); }
+.qh-entry-check:hover { background: color-mix(in srgb, var(--mud-palette-primary) 5%, transparent); }
+.qh-entry-check-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.qh-unticked .qh-entry-check-title { color: var(--mud-palette-text-secondary); text-decoration: line-through; }
+.qh-entry-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; margin-bottom: 4px; font-size: .8rem; }
+.qh-entry-preview { white-space: pre-wrap; padding: 10px 12px; border-radius: 6px; background: color-mix(in srgb, var(--mud-palette-primary) 5%, var(--mud-palette-surface)); font-size: .9rem; min-height: 2.5em; }
+.qh-entry-override { margin-top: 8px; }
+.qh-line-entry-description { display: flex; align-items: flex-start; gap: 4px; }
+.qh-line-entry-description > span { white-space: pre-wrap; flex: 1; padding-top: 6px; }
 .qh-grouping .qh-group-out.qh-group-on { border-color: var(--mud-palette-primary); color: var(--mud-palette-primary); }
 .qh-grouping .qh-group-hint { color: var(--mud-palette-text-primary); }
 .qh-grouping tr.qh-group-off { opacity: .35; }

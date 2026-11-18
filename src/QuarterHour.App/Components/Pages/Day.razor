@@ -277,9 +277,22 @@ else
                                                                      Variant="Variant.Text" Margin="Margin.Dense" Step="0.25m" Min="0m" Max="24m" Format="0.00" HideSpinButtons="true" DebounceInterval="800" />
                                                 </td>
                                                 <td class="qh-line-description">
-                                                    <MudTextField T="string" Value="@line.Description" ValueChanged="value => SetLine(line, change => change.Description = Changed(value, line.Description))"
-                                                                  Variant="Variant.Text" Margin="Margin.Dense" Lines="@Math.Clamp(line.Description.Split('\n').Length, 1, 6)" DebounceInterval="800"
-                                                                  Adornment="Adornment.Start" AdornmentIcon="@Ui.SourceIcon(line.Source)" />
+                                                    @if (line.EntryId is { } lineEntry)
+                                                    {
+                                                        <div class="qh-line-entry-description">
+                                                            <MudIcon Icon="@Icons.Material.Outlined.Workspaces" Size="Size.Small" Class="mt-1" />
+                                                            <span>@line.Description</span>
+                                                            <MudTooltip Text="Edit the entry's description">
+                                                                <MudIconButton Icon="@Icons.Material.Outlined.Edit" Size="Size.Small" OnClick="() => EditEntry(lineEntry)" aria-label="Edit the entry's description" />
+                                                            </MudTooltip>
+                                                        </div>
+                                                    }
+                                                    else
+                                                    {
+                                                        <MudTextField T="string" Value="@line.Description" ValueChanged="value => SetLine(line, change => change.Description = Changed(value, line.Description))"
+                                                                      Variant="Variant.Text" Margin="Margin.Dense" Lines="@Math.Clamp(line.Description.Split('\n').Length, 1, 6)" DebounceInterval="800"
+                                                                      Adornment="Adornment.Start" AdornmentIcon="@Ui.SourceIcon(line.Source)" />
+                                                    }
                                                 </td>
                                                 <td class="qh-nowrap"><MudIcon Icon="@Ui.LocationIcon(line.Location)" Size="Size.Small" Style="vertical-align:middle" /> @line.Location</td>
                                                 <td class="qh-col-sentiment">
@@ -729,8 +742,22 @@ else
         }
     }
 
-    /// <summary>Until the entry editor (#27) lands, an entry's description is edited on its line.</summary>
-    private void EditEntry(string entryId) => _tab = 1;
+    private async Task EditEntry(string entryId)
+    {
+        if (Sheet is null)
+        {
+            return;
+        }
+
+        List<ActivityResult> members = Sheet.Activities.Where(item => item.EntryId == entryId).OrderBy(item => item.Start).ToList();
+        DialogParameters<EntryDialog> parameters = new()
+        {
+            { dialog => dialog.EntryId, entryId },
+            { dialog => dialog.Items, members },
+            { dialog => dialog.Current, Workspace.Journal.Entries.GetValueOrDefault(entryId) },
+        };
+        await Dialogs.ShowAsync<EntryDialog>("Describe this entry", parameters, new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseButton = true });
+    }
 
     private TimesheetLine? EntryLine(string entryId) => Sheet?.Lines.FirstOrDefault(line => line.EntryId == entryId);
 
