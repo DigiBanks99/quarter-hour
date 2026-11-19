@@ -6,14 +6,17 @@ using QuarterHour.Core.Timesheets;
 
 namespace QuarterHour.Infrastructure.Export;
 
-/// <summary>Writes the timesheet as an .xlsx: the upload sheet laid out by the export profile, plus an optional summary.</summary>
+/// <summary>
+/// Writes the timesheet as an .xlsx: the upload sheet laid out by the export profile, plus an optional summary. A range
+/// narrows only the upload sheet; the summary always covers the whole period.
+/// </summary>
 public static class ExcelExporter
 {
     private const double MaxColumnWidth = 80;
 
-    public static byte[] Export(PeriodTimesheet sheet, WorkspaceConfig config)
+    public static byte[] Export(PeriodTimesheet sheet, WorkspaceConfig config, ExportRange? range = null)
     {
-        ExportTable table = ExportRows.Build(sheet, config);
+        ExportTable table = ExportRows.Build(sheet, config, range);
         using XLWorkbook workbook = new();
         string sheetName = SheetName(config.Export.SheetName, ExportProfile.DefaultSheetName);
         IXLWorksheet worksheet = workbook.AddWorksheet(sheetName);

@@ -60,21 +60,31 @@ public static partial class ExportRows
         new("{period}", "The period key (2026-11)"),
     ];
 
-    public static IReadOnlyList<TimesheetLine> LinesToExport(PeriodTimesheet sheet, WorkspaceConfig config)
+    /// <summary>
+    /// The lines the export profile keeps, narrowed to the range's days when one is given (no range: the whole period).
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">The range is reversed, crosses a calendar month or falls outside the period.</exception>
+    public static IReadOnlyList<TimesheetLine> LinesToExport(PeriodTimesheet sheet, WorkspaceConfig config, ExportRange? range = null)
     {
+        if (range?.Problem(sheet.Period) is { } problem)
+        {
+            throw new ArgumentOutOfRangeException(nameof(range), range, problem);
+        }
+
         ExportProfile profile = config.Export;
         return sheet.Lines
             .Where(line => profile.IncludeUnmapped || line.CategoryId is not null)
             .Where(line => !profile.SkipZeroHourRows || line.Minutes > 0)
             .Where(line => profile.IncludeLeave || config.FindCategory(line.CategoryId) is not { IsLeave: true })
+            .Where(line => range is not { } days || days.Contains(line.Date))
             .ToList();
     }
 
-    public static ExportTable Build(PeriodTimesheet sheet, WorkspaceConfig config)
+    public static ExportTable Build(PeriodTimesheet sheet, WorkspaceConfig config, ExportRange? range = null)
     {
         ExportProfile profile = config.Export;
         List<IReadOnlyList<ExportCell>> rows = [];
-        foreach (TimesheetLine line in LinesToExport(sheet, config))
+        foreach (TimesheetLine line in LinesToExport(sheet, config, range))
         {
             Category? category = config.FindCategory(line.CategoryId);
             rows.Add(profile.Columns.Select(column => Cell(column.Value, line, category, sheet.Period, profile.CellsAsText)).ToList());
@@ -152,7 +162,8 @@ public static partial class ExportRows
         return billable ? words[0] : words.Length > 1 ? words[1] : "";
     }
 
-    public static string FileName(ExportProfile profile, TimesheetPeriod period)
+    /// <summary>The download's file name. A range narrower than the period is added to it: "… 2026-11 (03–14).xlsx".</summary>
+    public static string FileName(ExportProfile profile, TimesheetPeriod period, ExportRange? range = null)
     {
         string name = (string.IsNullOrWhiteSpace(profile.FileNameTemplate) ? "TimesheetExport {period}.xlsx" : profile.FileNameTemplate)
             .Replace("{period}", period.Key, StringComparison.OrdinalIgnoreCase)
@@ -162,7 +173,19 @@ public static partial class ExportRows
             name = name.Replace(invalid, '-');
         }
 
-        return name.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase) ? name : name + ".xlsx";
+        string extension = ".xlsx";
+        if (name.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+        {
+            extension = name[^extension.Length..];
+            name = name[..^extension.Length];
+        }
+
+        if (range is { } days && !days.Covers(period))
+        {
+            name += $" ({days.Label})";
+        }
+
+        return name + extension;
     }
 
     [GeneratedRegex(@"^\{(?<name>\w+)(:(?<format>[^}]+))?\}$")]

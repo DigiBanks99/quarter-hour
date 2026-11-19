@@ -1,5 +1,6 @@
 using ClosedXML.Excel;
 using QuarterHour.Core.Configuration;
+using QuarterHour.Core.Export;
 using QuarterHour.Core.Learning;
 using QuarterHour.Core.Model;
 using QuarterHour.Core.Time;
@@ -83,4 +84,48 @@ public sealed class ExcelExporterTests
 
         void ItShouldAddASecondSheet() => workbook.Worksheets.Select(worksheet => worksheet.Name).ShouldBe(["TimesheetUpload", "Summary"]);
     }
+
+    [Test]
+    public void PartOfTheMonthIsExported()
+    {
+        _config.Export.IncludeSummarySheet = true;
+        _config.Rules.Add(new Rule
+        {
+            Name = "Team building",
+            Conditions = [new RuleCondition { Field = "title", Operator = ConditionOperator.Contains, Value = "team building" }],
+            CategoryId = DefaultWorkspace.TeamBuild,
+        });
+        TimesheetPeriod november = new(2026, 11);
+        PeriodTimesheet sheet = new TimesheetBuilder().Build(november, _config, new Journal(),
+        [
+            Meeting("s1", "Daily standup", 9),
+            Meeting("t1", "Team building", 10),
+            Meeting("s2", "Daily standup", 20),
+        ]);
+
+        byte[] file = ExcelExporter.Export(sheet, _config, new ExportRange(new DateOnly(2026, 11, 9), new DateOnly(2026, 11, 10)));
+        using XLWorkbook workbook = new(new MemoryStream(file));
+        List<TimesheetRow> rows = [.. TimesheetExportReader.Read(new MemoryStream(file))];
+        IXLWorksheet summary = workbook.Worksheet("Summary");
+        int summaryDays = summary.Column(1).CellsUsed().Count(cell => cell.DataType == XLDataType.DateTime);
+
+        ItShouldOnlyHoldTheRangesRows();
+        ItShouldMarkEachLinesBillable();
+        ItShouldSummariseTheWholeMonth();
+
+        void ItShouldOnlyHoldTheRangesRows() => rows.Select(row => row.Date).ShouldBe([new DateOnly(2026, 11, 9), new DateOnly(2026, 11, 10)]);
+
+        void ItShouldMarkEachLinesBillable() => rows.Select(row => row.Billable).ShouldBe([true, false]);
+
+        void ItShouldSummariseTheWholeMonth() => summaryDays.ShouldBe(30);
+    }
+
+    private static Activity Meeting(string id, string subject, int day) => CalendarActivities.ToActivity(new CalendarEvent
+    {
+        Id = id,
+        Subject = subject,
+        Start = new DateTimeOffset(2026, 11, day, 9, 0, 0, TimeSpan.Zero),
+        End = new DateTimeOffset(2026, 11, day, 10, 0, 0, TimeSpan.Zero),
+        Response = "accepted",
+    }, TimeZoneInfo.Utc);
 }

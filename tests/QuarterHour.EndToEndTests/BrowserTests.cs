@@ -125,4 +125,39 @@ public sealed class BrowserTests(QuarterHourApp app)
             () => dates.ShouldNotBeEmpty(),
             () => dates.ShouldAllBe(date => date.Year == 2026 && date.Month == 11));
     }
+
+    [Test]
+    public async Task PartOfTheMonthIsPickedForTheExport()
+    {
+        IPage page = await app.OpenPageAsync();
+        await page.GotoAsync("/settings");
+        await page.WaitForInteractiveAsync();
+        await page.ShowPeriodAsync(2026, 11);
+        await page.NavigateAsync("Export");
+        ILocator head = page.Locator(".qh-page-head");
+        await Assertions.Expect(head).ToContainTextAsync("TimesheetUpload 2026-11.xlsx");
+
+        ILocator range = page.Locator(".qh-export-range");
+        ILocator from = range.GetByRole(AriaRole.Textbox, new LocatorGetByRoleOptions { Name = "From", Exact = true });
+        ILocator to = range.GetByRole(AriaRole.Textbox, new LocatorGetByRoleOptions { Name = "To", Exact = true });
+        await from.FillAsync("3 Nov 2026");
+        await from.PressAsync("Tab");
+        await to.FillAsync("14 Nov 2026");
+        await to.PressAsync("Tab");
+        await Assertions.Expect(head).ToContainTextAsync("TimesheetUpload 2026-11 (03–14).xlsx");
+        string note = await page.Locator(".qh-checklist").InnerTextAsync();
+
+        await page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { Name = "Whole month" }).ClickAsync();
+        await Assertions.Expect(head).ToContainTextAsync("TimesheetUpload 2026-11.xlsx");
+        string wholeMonth = await head.InnerTextAsync();
+
+        await page.Context.CloseAsync();
+
+        ItShouldSayHowManyDaysTheUploadHolds();
+        ItShouldGoBackToTheWholeMonth();
+
+        void ItShouldSayHowManyDaysTheUploadHolds() => note.ShouldContain("The upload holds 12 days (3–14 Nov) of November 2026");
+
+        void ItShouldGoBackToTheWholeMonth() => wholeMonth.ShouldNotContain("(03–14)");
+    }
 }

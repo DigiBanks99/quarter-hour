@@ -12,20 +12,39 @@
 else
 {
     PeriodTotals totals = Sheet.Totals;
-    ExportTable table = ExportRows.Build(Sheet, Config);
-    IReadOnlyList<TimesheetLine> exported = ExportRows.LinesToExport(Sheet, Config);
+    TimesheetPeriod period = Sheet.Period;
+    ExportRange? picked = Picked(period);
+    string? rangeProblem = picked?.Problem(period);
+    ExportRange? range = rangeProblem is null && picked is { } days && !days.Covers(period) ? days : null;
+    ExportTable table = ExportRows.Build(Sheet, Config, range);
+    IReadOnlyList<TimesheetLine> exported = ExportRows.LinesToExport(Sheet, Config, range);
     int zeroLines = Sheet.Lines.Count(line => line.Minutes == 0 && line.CategoryId is not null);
     int leaveMinutes = Config.Export.IncludeLeave ? 0 : totals.LeaveMinutes;
-    string fileName = ExportRows.FileName(Config.Export, Sheet.Period);
+    string fileName = ExportRows.FileName(Config.Export, period, range);
+    string download = $"api/export/{period.Key}{range?.Query}";
 
     <div class="qh-page-head">
         <div>
-            <MudText Typo="Typo.h4" Class="qh-title">Export @Sheet.Period.Name</MudText>
+            <MudText Typo="Typo.h4" Class="qh-title">Export @period.Name</MudText>
             <MudText Typo="Typo.body2" Class="qh-muted">@Ui.Plural(exported.Count, "row") · @Ui.Hours(exported.Sum(line => line.Minutes)) · @fileName</MudText>
         </div>
         <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large" StartIcon="@Icons.Material.Filled.FileDownload"
-                   Href="@($"api/export/{Sheet.Period.Key}")" Target="_blank" Disabled="exported.Count == 0">Download .xlsx</MudButton>
+                   Href="@download" Target="_blank" Disabled="exported.Count == 0 || rangeProblem is not null">Download .xlsx</MudButton>
     </div>
+
+    <div class="qh-export-range mb-3">
+        <MudDatePicker Date="@ToDate(_from)" DateChanged="value => _from = FromDate(value)" Label="From" Clearable="true" Editable="true" Placeholder="@period.Start.ToString("d MMM yyyy")"
+                       MinDate="@ToDate(period.Start)" MaxDate="@ToDate(_to ?? period.LastDay)" StartMonth="@ToDate(_from ?? period.Start)"
+                       Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="d MMM yyyy" Class="qh-export-range-field" />
+        <MudDatePicker Date="@ToDate(_to)" DateChanged="value => _to = FromDate(value)" Label="To" Clearable="true" Editable="true" Placeholder="@period.LastDay.ToString("d MMM yyyy")"
+                       MinDate="@ToDate(_from ?? period.Start)" MaxDate="@ToDate(period.LastDay)" StartMonth="@ToDate(_to ?? _from ?? period.Start)"
+                       Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="d MMM yyyy" Class="qh-export-range-field" />
+        <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Outlined.DateRange" Disabled="_from is null && _to is null" OnClick="WholePeriod">Whole month</MudButton>
+    </div>
+    @if (rangeProblem is not null)
+    {
+        <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">@rangeProblem Pick days within @period.Name, or go back to the whole month.</MudAlert>
+    }
 
     <MudPaper Class="qh-panel mb-3" Elevation="0">
         <MudText Typo="Typo.h6" Class="mb-2">Before you upload</MudText>
@@ -48,6 +67,10 @@ else
             @if (leaveMinutes > 0)
             {
                 <Check Info="true" Good="@($"{Ui.Hours(leaveMinutes)} of leave counts towards your days but isn't in the upload (it goes through the leave system).")" />
+            }
+            @if (range is { } narrowed)
+            {
+                <Check Info="true" Good="@($"The upload holds {Ui.Plural(narrowed.Days, "day")} ({narrowed.DisplayLabel}) of {period.Name}; the checks above judge the whole month.")" />
             }
             @if (totals.OverlappingActivities > 0)
             {
@@ -163,6 +186,36 @@ else
 }
 
 @code {
+    // The range is only kept while the page is open: a reload or another period goes back to the whole period.
+    private DateOnly? _from;
+    private DateOnly? _to;
+    private TimesheetPeriod? _rangePeriod;
+
+    protected override Task OnSheetLoadedAsync()
+    {
+        if (Sheet is not null && Sheet.Period != _rangePeriod)
+        {
+            _rangePeriod = Sheet.Period;
+            WholePeriod();
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>The picked days, an unpicked end standing for the period's edge; null when no day is picked.</summary>
+    private ExportRange? Picked(TimesheetPeriod period) =>
+        _from is null && _to is null ? null : new ExportRange(_from ?? period.Start, _to ?? period.LastDay);
+
+    private void WholePeriod()
+    {
+        _from = null;
+        _to = null;
+    }
+
+    private static DateTime? ToDate(DateOnly? date) => date?.ToDateTime(TimeOnly.MinValue);
+
+    private static DateOnly? FromDate(DateTime? date) => date is { } value ? DateOnly.FromDateTime(value) : null;
+
     private void Save(Action<ExportProfile> change) => Workspace.UpdateConfig(config => change(config.Export));
 
     private void SetSentiments(string? text) => Save(profile =>
