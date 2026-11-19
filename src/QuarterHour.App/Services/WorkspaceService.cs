@@ -84,7 +84,7 @@ public sealed class WorkspaceService
 
     public DateOnly Today => DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(_time.GetUtcNow(), TimeZone).DateTime);
 
-    public TimesheetPeriod PeriodContaining(DateOnly date) => TimesheetPeriod.Containing(date, _config.General.PeriodStartDay);
+    public TimesheetPeriod PeriodContaining(DateOnly date) => TimesheetPeriod.Containing(date);
 
     public TimesheetPeriod CurrentPeriod => PeriodContaining(Today);
 
@@ -173,7 +173,7 @@ public sealed class WorkspaceService
     {
         lock (_gate)
         {
-            if (_sheets.TryGetValue(period.Key, out PeriodTimesheet? cached) && cached.Period == period)
+            if (_sheets.TryGetValue(period.Key, out PeriodTimesheet? cached))
             {
                 return cached;
             }
@@ -199,7 +199,7 @@ public sealed class WorkspaceService
             long version;
             lock (_gate)
             {
-                if (_sheets.TryGetValue(period.Key, out PeriodTimesheet? cached) && cached.Period == period)
+                if (_sheets.TryGetValue(period.Key, out PeriodTimesheet? cached))
                 {
                     return cached;
                 }

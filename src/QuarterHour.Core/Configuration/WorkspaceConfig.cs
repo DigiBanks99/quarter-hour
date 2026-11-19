@@ -135,7 +135,6 @@ public sealed class WorkspaceConfig
         Targets.CustomHolidays ??= [];
         Rounding.IncrementMinutes = Math.Clamp(Rounding.IncrementMinutes, 1, 240);
         Rounding.RoundUpFromMinutes = Math.Clamp(Rounding.RoundUpFromMinutes, 0, Rounding.IncrementMinutes);
-        General.PeriodStartDay = Math.Clamp(General.PeriodStartDay, 1, 28);
         return this;
     }
 
@@ -146,9 +145,6 @@ public sealed class GeneralSettings
 {
     /// <summary>Windows or IANA time zone id used to turn calendar and agent timestamps into local working time.</summary>
     public string TimeZoneId { get; set; } = TimeZoneInfo.Local.Id;
-
-    /// <summary>Day of the month a timesheet period starts on. 1 means calendar months.</summary>
-    public int PeriodStartDay { get; set; } = 1;
 
     public OverlapPolicy OverlapPolicy { get; set; } = OverlapPolicy.HigherPriorityWins;
 

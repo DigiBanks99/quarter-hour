@@ -2,33 +2,19 @@ using System.Globalization;
 
 namespace QuarterHour.Core.Time;
 
-/// <summary>
-/// The span of days one timesheet covers. With a start day of 1 it is a calendar month. With a later start day,
-/// the period named after month M runs from that day in the previous month up to the day before it in month M
-/// (start day 26: "November" is 26 October to 25 November).
-/// </summary>
+/// <summary>The span of days one timesheet covers: a calendar month, from its first to its last day.</summary>
 public readonly record struct TimesheetPeriod
 {
-    public TimesheetPeriod(int year, int month, int startDay = 1)
+    public TimesheetPeriod(int year, int month)
     {
         Year = year;
         Month = month;
-        StartDay = Math.Clamp(startDay, 1, 28);
-        if (StartDay == 1)
-        {
-            Start = new DateOnly(year, month, 1);
-            End = Start.AddMonths(1);
-        }
-        else
-        {
-            End = new DateOnly(year, month, StartDay);
-            Start = End.AddMonths(-1);
-        }
+        Start = new DateOnly(year, month, 1);
+        End = Start.AddMonths(1);
     }
 
     public int Year { get; }
     public int Month { get; }
-    public int StartDay { get; }
 
     /// <summary>The first day in the period.</summary>
     public DateOnly Start { get; }
@@ -40,7 +26,7 @@ public readonly record struct TimesheetPeriod
 
     public string Key => $"{Year:D4}-{Month:D2}";
 
-    public string Name => new DateOnly(Year, Month, 1).ToString("MMMM yyyy", CultureInfo.InvariantCulture);
+    public string Name => Start.ToString("MMMM yyyy", CultureInfo.InvariantCulture);
 
     public string RangeLabel =>
         $"{Start.ToString("d MMM", CultureInfo.InvariantCulture)} – {LastDay.ToString("d MMM yyyy", CultureInfo.InvariantCulture)}";
@@ -59,18 +45,9 @@ public readonly record struct TimesheetPeriod
 
     public TimesheetPeriod Previous() => Shift(-1);
 
-    public static TimesheetPeriod Containing(DateOnly date, int startDay = 1)
-    {
-        TimesheetPeriod candidate = new(date.Year, date.Month, startDay);
-        if (candidate.Contains(date))
-        {
-            return candidate;
-        }
+    public static TimesheetPeriod Containing(DateOnly date) => new(date.Year, date.Month);
 
-        return date >= candidate.End ? candidate.Next() : candidate.Previous();
-    }
-
-    public static bool TryParse(string? key, int startDay, out TimesheetPeriod period)
+    public static bool TryParse(string? key, out TimesheetPeriod period)
     {
         period = default;
         if (string.IsNullOrWhiteSpace(key)
@@ -79,14 +56,14 @@ public readonly record struct TimesheetPeriod
             return false;
         }
 
-        period = new TimesheetPeriod(first.Year, first.Month, startDay);
+        period = new TimesheetPeriod(first.Year, first.Month);
         return true;
     }
 
     private TimesheetPeriod Shift(int months)
     {
-        DateOnly first = new DateOnly(Year, Month, 1).AddMonths(months);
-        return new TimesheetPeriod(first.Year, first.Month, StartDay);
+        DateOnly first = Start.AddMonths(months);
+        return new TimesheetPeriod(first.Year, first.Month);
     }
 
     public override string ToString() => Key;

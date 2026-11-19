@@ -15,15 +15,7 @@ public sealed class UiState
 
     public event Action? PeriodChanged;
 
-    public TimesheetPeriod Period
-    {
-        get
-        {
-            TimesheetPeriod period = _period ?? _workspace.CurrentPeriod;
-            int startDay = _workspace.Config.General.PeriodStartDay;
-            return period.StartDay == startDay ? period : new TimesheetPeriod(period.Year, period.Month, startDay);
-        }
-    }
+    public TimesheetPeriod Period => _period ?? _workspace.CurrentPeriod;
 
     public void SetPeriod(TimesheetPeriod period)
     {

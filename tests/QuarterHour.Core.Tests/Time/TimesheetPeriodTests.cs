@@ -21,33 +21,57 @@ public sealed class TimesheetPeriodTests
     }
 
     [Test]
-    public void ThePeriodStartsMidMonth()
+    public void TheDaysEitherSideOfAMonthEndAreLookedUp()
     {
-        TimesheetPeriod period = new(2026, 11, startDay: 26);
+        TimesheetPeriod lastDay = TimesheetPeriod.Containing(new DateOnly(2026, 11, 30));
+        TimesheetPeriod firstDay = TimesheetPeriod.Containing(new DateOnly(2026, 12, 1));
 
-        ItShouldStartInThePreviousMonth();
-        ItShouldEndTheDayBeforeTheStartDay();
+        ItShouldPutTheLastDayInItsOwnMonth();
+        ItShouldPutTheFirstDayInTheNextMonth();
 
-        void ItShouldStartInThePreviousMonth() => period.Start.ShouldBe(new DateOnly(2026, 10, 26));
+        void ItShouldPutTheLastDayInItsOwnMonth() => lastDay.Key.ShouldBe("2026-11");
 
-        void ItShouldEndTheDayBeforeTheStartDay() => period.LastDay.ShouldBe(new DateOnly(2026, 11, 25));
+        void ItShouldPutTheFirstDayInTheNextMonth() => firstDay.Key.ShouldBe("2026-12");
     }
 
     [Test]
-    public void ADayAfterTheCutOffIsLookedUp()
+    [Arguments(2026, 28)]
+    [Arguments(2028, 29)]
+    public void FebruaryIsUsed(int year, int days)
     {
-        TimesheetPeriod period = TimesheetPeriod.Containing(new DateOnly(2026, 11, 27), startDay: 26);
+        TimesheetPeriod period = new(year, 2);
 
-        ItShouldBelongToTheNextMonthsPeriod();
+        ItShouldCoverTheWholeOfFebruary();
 
-        void ItShouldBelongToTheNextMonthsPeriod() => period.Key.ShouldBe("2026-12");
+        void ItShouldCoverTheWholeOfFebruary() => period.ShouldSatisfyAllConditions(
+            () => period.Start.ShouldBe(new DateOnly(year, 2, 1)),
+            () => period.LastDay.ShouldBe(new DateOnly(year, 2, days)),
+            () => period.Days().Count().ShouldBe(days));
+    }
+
+    [Test]
+    public void TheYearTurns()
+    {
+        TimesheetPeriod january = new TimesheetPeriod(2026, 12).Next();
+        TimesheetPeriod december = new TimesheetPeriod(2027, 1).Previous();
+
+        ItShouldMoveOnToJanuaryOfTheNextYear();
+        ItShouldMoveBackToDecemberOfThePreviousYear();
+
+        void ItShouldMoveOnToJanuaryOfTheNextYear() => january.ShouldSatisfyAllConditions(
+            () => january.Key.ShouldBe("2027-01"),
+            () => january.Start.ShouldBe(new DateOnly(2027, 1, 1)));
+
+        void ItShouldMoveBackToDecemberOfThePreviousYear() => december.ShouldSatisfyAllConditions(
+            () => december.Key.ShouldBe("2026-12"),
+            () => december.LastDay.ShouldBe(new DateOnly(2026, 12, 31)));
     }
 
     [Test]
     public void APeriodKeyIsRead()
     {
-        bool parsed = TimesheetPeriod.TryParse("2026-02", 1, out TimesheetPeriod period);
-        bool rejected = TimesheetPeriod.TryParse("February", 1, out _);
+        bool parsed = TimesheetPeriod.TryParse("2026-02", out TimesheetPeriod period);
+        bool rejected = TimesheetPeriod.TryParse("February", out _);
 
         ItShouldReadTheYearAndMonth();
         ItShouldRejectAnythingElse();
