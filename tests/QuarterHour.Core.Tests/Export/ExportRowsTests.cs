@@ -164,6 +164,26 @@ public sealed class ExportRowsTests
         void ItShouldIncludeTheMonthAndExtension() => name.ShouldBe("Wilco November 2026.xlsx");
     }
 
+    [Test]
+    public void PartOfThePeriodIsExported()
+    {
+        ExportProfile profile = new();
+
+        string range = ExportRows.FileName(profile, November, new ExportRange(new DateOnly(2026, 11, 3), new DateOnly(2026, 11, 14)));
+        string singleDay = ExportRows.FileName(profile, November, new ExportRange(new DateOnly(2026, 11, 3), new DateOnly(2026, 11, 3)));
+        string wholePeriod = ExportRows.FileName(profile, November, new ExportRange(November.Start, November.LastDay));
+
+        ItShouldAddTheDaysToTheName();
+        ItShouldNameASingleDay();
+        ItShouldKeepTheNameForTheWholePeriod();
+
+        void ItShouldAddTheDaysToTheName() => range.ShouldBe("TimesheetUpload 2026-11 (03–14).xlsx");
+
+        void ItShouldNameASingleDay() => singleDay.ShouldBe("TimesheetUpload 2026-11 (03).xlsx");
+
+        void ItShouldKeepTheNameForTheWholePeriod() => wholePeriod.ShouldBe("TimesheetUpload 2026-11.xlsx");
+    }
+
     private PeriodTimesheet Build(params Activity[] activities) =>
         new TimesheetBuilder().Build(November, _config.Normalize(), new Journal(), activities);
 }

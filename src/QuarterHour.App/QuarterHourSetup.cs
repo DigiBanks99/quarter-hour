@@ -48,17 +48,22 @@ public static class QuarterHourSetup
 
     public static void MapQuarterHourEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/api/export/{period}", async (string period, WorkspaceService workspace, CancellationToken cancellationToken) =>
+        endpoints.MapGet("/api/export/{period}", async (string period, DateOnly? from, DateOnly? to, WorkspaceService workspace, CancellationToken cancellationToken) =>
         {
             if (!TimesheetPeriod.TryParse(period, out TimesheetPeriod parsed))
             {
                 return Results.BadRequest("Use a period like 2026-11.");
             }
 
+            if (!ExportRange.TryCreate(parsed, from, to, out ExportRange? range, out string? problem))
+            {
+                return Results.BadRequest(problem);
+            }
+
             PeriodTimesheet sheet = await workspace.GetTimesheetAsync(parsed, cancellationToken);
             WorkspaceConfig config = workspace.ConfigSnapshot();
-            byte[] file = ExcelExporter.Export(sheet, config);
-            return Results.File(file, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ExportRows.FileName(config.Export, parsed));
+            byte[] file = ExcelExporter.Export(sheet, config, range);
+            return Results.File(file, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ExportRows.FileName(config.Export, parsed, range));
         });
 
         endpoints.MapGet("/api/config", (WorkspaceService workspace) =>

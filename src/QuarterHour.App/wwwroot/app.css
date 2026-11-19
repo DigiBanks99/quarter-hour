@@ -343,6 +343,8 @@ a.qh-cand:hover { border-color: var(--mud-palette-primary); }
 .qh-schedule-bottom { margin-top: 8px; }
 .qh-schedule-location { width: 190px; flex: none; }
 .qh-schedule-field { max-width: 190px; }
+.qh-export-range { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.qh-export-range-field { max-width: 190px; }
 .qh-schedule-note { flex: 1; min-width: 160px; }
 .qh-weekdays { display: inline-flex; gap: 3px; }
 .qh-weekday { width: 34px; height: 30px; border-radius: 7px; border: 1px solid var(--qh-line); background: var(--mud-palette-surface); color: var(--mud-palette-text-secondary);
