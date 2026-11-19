@@ -86,5 +86,23 @@ public sealed class WorkspaceStoreTests : IDisposable
         void ItShouldBeRefused() => exception.ShouldBeAssignableTo<JsonException>();
     }
 
+    [Test]
+    public void AConfigurationWithAPeriodStartDayIsLoaded()
+    {
+        string file = Path.Combine(_data.Path, "config.json");
+        File.WriteAllText(file, """{ "schemaVersion": 2, "general": { "timeZoneId": "UTC", "periodStartDay": 26 } }""");
+
+        WorkspaceConfig config = _store.LoadConfig();
+        _store.SaveConfig(config);
+        string saved = File.ReadAllText(file);
+
+        ItShouldKeepTheRestOfTheSettings();
+        ItShouldDropTheStartDayWhenSaving();
+
+        void ItShouldKeepTheRestOfTheSettings() => config.General.TimeZoneId.ShouldBe("UTC");
+
+        void ItShouldDropTheStartDayWhenSaving() => saved.ShouldNotContain("periodStartDay");
+    }
+
     public void Dispose() => _data.Dispose();
 }

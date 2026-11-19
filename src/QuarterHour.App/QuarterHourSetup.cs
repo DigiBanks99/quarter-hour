@@ -50,7 +50,7 @@ public static class QuarterHourSetup
     {
         endpoints.MapGet("/api/export/{period}", async (string period, WorkspaceService workspace, CancellationToken cancellationToken) =>
         {
-            if (!TimesheetPeriod.TryParse(period, workspace.Config.General.PeriodStartDay, out TimesheetPeriod parsed))
+            if (!TimesheetPeriod.TryParse(period, out TimesheetPeriod parsed))
             {
                 return Results.BadRequest("Use a period like 2026-11.");
             }

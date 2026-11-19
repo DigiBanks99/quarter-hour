@@ -243,8 +243,6 @@
                             <MudSelectItem T="string" Value="zone.Id">@zone.DisplayName</MudSelectItem>
                         }
                     </MudSelect>
-                    <MudNumericField T="int" Value="Config.General.PeriodStartDay" ValueChanged="value => Save(config => config.General.PeriodStartDay = value)" Label="Timesheet periods start on day" Min="1" Max="28"
-                                     HelperText="1 for calendar months" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mt-3" />
                     <MudText Typo="Typo.subtitle2" Class="mt-3">Working days</MudText>
                     <div class="qh-weekdays">
                         @foreach (DayOfWeek day in Week)
